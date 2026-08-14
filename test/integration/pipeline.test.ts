@@ -1,9 +1,12 @@
+import { execFile as execFileCb } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { promisify } from 'node:util'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { ffmpegPath } from '../../src/main/binaries.js'
 import { extractWav } from '../../src/main/media/extract.js'
 import { format } from '../../src/main/export/formatters.js'
 import { TranscriptionJob } from '../../src/main/jobs/transcription-job.js'
@@ -11,14 +14,32 @@ import { probe } from '../../src/main/media/probe.js'
 import { runWhisper } from '../../src/main/whisper/runner.js'
 import type { JobPhase } from '../../src/shared/types.js'
 
+const execFile = promisify(execFileCb)
+
 const FIXTURES = fileURLToPath(new URL('../fixtures/', import.meta.url))
 const MODEL = fileURLToPath(new URL('../../.cache/models/ggml-tiny.bin', import.meta.url))
 
 let workDir: string
+/** hello.wav looped ~20x so a cancel can land mid-transcription, not just during probe. */
+let longWavPath: string
 
 beforeAll(async () => {
   expect(existsSync(MODEL), 'run `npm run test:integration` so the tiny model is downloaded').toBe(true)
   workDir = await mkdtemp(join(tmpdir(), 'whisper-drop-'))
+
+  longWavPath = join(workDir, 'long.wav')
+  await execFile(ffmpegPath(), [
+    '-y',
+    '-loglevel', 'error',
+    '-stream_loop', '19',
+    '-i', join(FIXTURES, 'hello.wav'),
+    '-c', 'copy',
+    longWavPath,
+  ])
+  // Guards against the loop silently producing a short file and the
+  // cancellation test passing for the wrong reason.
+  const longInfo = await probe(longWavPath)
+  expect(longInfo.durationMs).toBeGreaterThan(20_000)
 })
 
 afterAll(async () => {
@@ -123,13 +144,35 @@ describe('full pipeline', () => {
     expect(job.state.realtimeFactor).toBeGreaterThan(0)
   })
 
-  it('cancels a running job and cleans up', async () => {
-    const job = makeJob(join(FIXTURES, 'hello.mp4'), 'cancel-job')
+  it('cancels cleanly when cancelled before any work starts', async () => {
+    // JS run-to-completion means this cancel always lands during the probe
+    // phase, before ffmpeg or whisper-cli ever spawn. Real, worth covering,
+    // but it proves nothing about mid-flight cleanup — see the test below.
+    const job = makeJob(join(FIXTURES, 'hello.mp4'), 'cancel-early-job')
     const started = job.start()
     job.cancel()
     await started
 
     expect(job.state.phase).toBe('cancelled')
-    expect(existsSync(join(workDir, 'cancel-job.wav'))).toBe(false)
+    expect(job.state.error).toBeUndefined()
+  })
+
+  it('cancels once transcription is genuinely underway and cleans up the temp wav', async () => {
+    const job = makeJob(longWavPath, 'cancel-midflight-job')
+
+    let cancelled = false
+    job.subscribe((state) => {
+      if (!cancelled && state.phase === 'transcribing' && state.segments.length > 0) {
+        cancelled = true
+        job.cancel()
+      }
+    })
+    await job.start()
+
+    expect(job.state.phase).toBe('cancelled')
+    expect(job.state.error).toBeUndefined()
+    // The wav genuinely existed by this point, so its absence here means
+    // cleanup actually ran, not just that it was never created.
+    expect(existsSync(join(workDir, 'cancel-midflight-job.wav'))).toBe(false)
   })
 })
