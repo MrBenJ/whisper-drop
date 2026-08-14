@@ -172,4 +172,15 @@ describe('the Electron boundary', () => {
   // it. This follows the actual import graph instead.
   it('keeps shared code from transitively reaching electron', checksNoElectronReach('shared/'))
   it('keeps the renderer from transitively reaching electron', checksNoElectronReach('renderer/'))
+
+  it('keeps every ipc handler module electron-free except its index', async () => {
+    const handlers = FILES.filter(
+      (file) => key(file).startsWith('main/ipc/') && key(file) !== 'main/ipc/index.ts',
+    )
+
+    expect(handlers.length).toBeGreaterThan(3)
+    for (const file of handlers) {
+      expect(ELECTRON_IMPORT.test(await readFile(file, 'utf8')), key(file)).toBe(false)
+    }
+  })
 })
