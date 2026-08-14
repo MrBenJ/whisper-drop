@@ -71,7 +71,15 @@ export async function extractWav(options: ExtractOptions, deps: ExtractDeps = {}
   try {
     const code = await new Promise<number>((resolve, reject) => {
       child.on('close', resolve)
-      child.on('error', reject)
+      child.on('error', (cause) =>
+        reject(
+          new AppError(
+            'FFMPEG_FAILED',
+            "Couldn't prepare the audio from this file.",
+            cause instanceof Error ? cause.message : String(cause),
+          ),
+        ),
+      )
     })
 
     if (signal?.aborted) throw new Error('extractWav: aborted')

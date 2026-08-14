@@ -33,7 +33,7 @@ export type ErrorCode =
   | 'WHISPER_FAILED'
   | 'FFMPEG_FAILED'
 
-/** Serialisable snapshot of a job, safe to send across IPC in plan 3. */
+/** Serialisable snapshot of a job, safe to send across the IPC boundary. */
 export type JobState = {
   id: string
   filePath: string

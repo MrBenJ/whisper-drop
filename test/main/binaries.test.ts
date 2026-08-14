@@ -4,6 +4,14 @@ import { ffmpegPath, ffprobePath, whisperCliPath } from '../../src/main/binaries
 
 const ORIGINAL = process.env.WHISPER_DROP_WHISPER_BIN
 
+// `npm test` is the first thing a stranger runs on a fresh clone, before they've
+// necessarily run `npm run setup` to build whisper.cpp. Skip (rather than fail)
+// the assertions that need that built binary, with a reason naming the fix.
+delete process.env.WHISPER_DROP_WHISPER_BIN
+const whisperCliBuilt = existsSync(whisperCliPath())
+if (ORIGINAL === undefined) delete process.env.WHISPER_DROP_WHISPER_BIN
+else process.env.WHISPER_DROP_WHISPER_BIN = ORIGINAL
+
 afterEach(() => {
   if (ORIGINAL === undefined) delete process.env.WHISPER_DROP_WHISPER_BIN
   else process.env.WHISPER_DROP_WHISPER_BIN = ORIGINAL
@@ -15,10 +23,15 @@ describe('whisperCliPath', () => {
     expect(whisperCliPath()).toBe('/custom/whisper-cli')
   })
 
-  it('resolves to a file that exists once npm run setup has been run', () => {
-    delete process.env.WHISPER_DROP_WHISPER_BIN
-    expect(existsSync(whisperCliPath())).toBe(true)
-  })
+  it.skipIf(!whisperCliBuilt)(
+    whisperCliBuilt
+      ? 'resolves to a file that exists once npm run setup has been run'
+      : 'resolves to a file that exists once npm run setup has been run (skipped: run `npm run setup` to build whisper.cpp first)',
+    () => {
+      delete process.env.WHISPER_DROP_WHISPER_BIN
+      expect(existsSync(whisperCliPath())).toBe(true)
+    },
+  )
 
   it('includes the platform and architecture in the resolved path', () => {
     delete process.env.WHISPER_DROP_WHISPER_BIN

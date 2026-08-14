@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import ffmpegStatic from 'ffmpeg-static'
 import ffprobeStatic from 'ffprobe-static'
+import { AppError } from '../shared/errors.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 
@@ -34,7 +35,13 @@ export function whisperCliPath(): string {
 }
 
 export function ffmpegPath(): string {
-  if (!ffmpegStatic) throw new Error('ffmpeg-static did not resolve a binary for this platform')
+  if (!ffmpegStatic) {
+    throw new AppError(
+      'FFMPEG_FAILED',
+      "Couldn't prepare the audio from this file.",
+      `ffmpeg-static did not resolve a binary for ${process.platform}-${process.arch}`,
+    )
+  }
   return ffmpegStatic
 }
 

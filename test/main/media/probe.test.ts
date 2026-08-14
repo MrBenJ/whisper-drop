@@ -74,6 +74,37 @@ describe('probe', () => {
     })
   })
 
+  it('falls back to the full error when the cause carries an empty stderr (e.g. ENOENT)', async () => {
+    const execFile = async () => {
+      throw Object.assign(new Error('spawn ffprobe ENOENT'), { stderr: '' })
+    }
+    await expect(probe('/tmp/nope.txt', { execFile })).rejects.toMatchObject({
+      code: 'UNREADABLE_MEDIA',
+      detail: expect.stringContaining('spawn ffprobe ENOENT'),
+    })
+  })
+
+  it('passes the abort signal through to execFile', async () => {
+    const controller = new AbortController()
+    let captured: { signal?: AbortSignal; maxBuffer?: number } | undefined
+    const execFile = async (_file: string, _args: string[], options?: typeof captured) => {
+      captured = options
+      return { stdout: withAudio, stderr: '' }
+    }
+    await probe('/tmp/a.mp4', { execFile, signal: controller.signal })
+    expect(captured?.signal).toBe(controller.signal)
+  })
+
+  it('passes a maxBuffer well above execFile default of 1 MB', async () => {
+    let captured: { signal?: AbortSignal; maxBuffer?: number } | undefined
+    const execFile = async (_file: string, _args: string[], options?: typeof captured) => {
+      captured = options
+      return { stdout: withAudio, stderr: '' }
+    }
+    await probe('/tmp/a.mp4', { execFile })
+    expect(captured?.maxBuffer).toBeGreaterThanOrEqual(10 * 1024 * 1024)
+  })
+
   it('respects injected ffprobePath', async () => {
     let capturedFile: string = ''
     const execFile = async (file: string) => {

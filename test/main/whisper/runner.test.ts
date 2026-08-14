@@ -69,6 +69,18 @@ describe('runWhisper', () => {
     })
   })
 
+  it('attributes a spawn error to WHISPER_FAILED, carrying the underlying message', async () => {
+    const fake = createFakeChild()
+    const promise = runWhisper(OPTIONS, { spawn: () => fake.child })
+
+    fake.child.emit('error', new Error('spawn whisper-cli ENOENT'))
+
+    await expect(promise).rejects.toMatchObject({
+      code: 'WHISPER_FAILED',
+      detail: expect.stringContaining('spawn whisper-cli ENOENT'),
+    })
+  })
+
   it('kills the process when the signal aborts', async () => {
     const controller = new AbortController()
     const fake = createFakeChild()

@@ -66,7 +66,15 @@ export async function runWhisper(options: RunOptions, deps: RunnerDeps = {}): Pr
   try {
     const code = await new Promise<number>((resolve, reject) => {
       child.on('close', resolve)
-      child.on('error', reject)
+      child.on('error', (cause) =>
+        reject(
+          new AppError(
+            'WHISPER_FAILED',
+            'Transcription failed unexpectedly.',
+            cause instanceof Error ? cause.message : String(cause),
+          ),
+        ),
+      )
     })
 
     if (signal?.aborted) throw new Error('runWhisper: aborted')

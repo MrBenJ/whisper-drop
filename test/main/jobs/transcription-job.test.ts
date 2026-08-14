@@ -18,7 +18,7 @@ const SEGMENTS: Segment[] = [
 function makeDeps(overrides: Partial<JobDeps> = {}): JobDeps {
   let clock = 0
   return {
-    probe: async () => MEDIA,
+    probe: async (_filePath: string, _signal: AbortSignal) => MEDIA,
     extract: async () => {},
     run: async (_options, onSegment) => {
       for (const segment of SEGMENTS) onSegment(segment)
@@ -266,6 +266,42 @@ describe('TranscriptionJob', () => {
     await job.start()
     job.cancel()
     expect(job.state.phase).toBe('done')
+  })
+
+  it('passes the abort signal through to the probe port', async () => {
+    let capturedSignal: AbortSignal | undefined
+    const job = makeJob({
+      probe: async (_filePath, signal) => {
+        capturedSignal = signal
+        return MEDIA
+      },
+    })
+    await job.start()
+    expect(capturedSignal).toBeInstanceOf(AbortSignal)
+  })
+
+  it('does not let a throwing listener stop other listeners or the job', async () => {
+    const good = vi.fn()
+    const job = makeJob()
+    job.subscribe(() => {
+      throw new Error('bad listener')
+    })
+    job.subscribe(good)
+    await job.start()
+    expect(good).toHaveBeenCalled()
+    expect(job.state.phase).toBe('done')
+  })
+
+  it('ignores a second start() call on an already-started job', async () => {
+    const run = vi.fn(async (_options: unknown, onSegment: (segment: Segment) => void) => {
+      for (const segment of SEGMENTS) onSegment(segment)
+      return SEGMENTS
+    })
+    const job = makeJob({ run })
+    const first = job.start()
+    const second = job.start()
+    await Promise.all([first, second])
+    expect(run).toHaveBeenCalledTimes(1)
   })
 
   it('reports an ETA at exactly the ten percent threshold', async () => {

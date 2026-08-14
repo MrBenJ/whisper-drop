@@ -6,11 +6,19 @@ import type { MediaInfo } from '../../shared/types.js'
 
 const execFileAsync = promisify(execFileCb)
 
-export type ExecFileFn = (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+/** Ample headroom over execFile's 1 MB default for files with many streams or heavy metadata. */
+const MAX_BUFFER_BYTES = 10 * 1024 * 1024
+
+export type ExecFileFn = (
+  file: string,
+  args: string[],
+  options?: { signal?: AbortSignal; maxBuffer?: number },
+) => Promise<{ stdout: string; stderr: string }>
 
 export type ProbeDeps = {
   ffprobePath?: string
   execFile?: ExecFileFn
+  signal?: AbortSignal
 }
 
 function unreadable(path: string, detail: string): AppError {
@@ -27,20 +35,23 @@ function unreadable(path: string, detail: string): AppError {
  * allowlist anywhere in the codebase.
  */
 export async function probe(filePath: string, deps: ProbeDeps = {}): Promise<MediaInfo> {
-  const exec = deps.execFile ?? ((file, args) => execFileAsync(file, args))
+  const exec: ExecFileFn =
+    deps.execFile ??
+    ((file, args, options) =>
+      execFileAsync(file, args, options) as Promise<{ stdout: string; stderr: string }>)
   const binary = deps.ffprobePath ?? defaultFfprobePath()
 
   let stdout: string
   try {
-    ;({ stdout } = await exec(binary, [
-      '-v', 'error',
-      '-print_format', 'json',
-      '-show_format',
-      '-show_streams',
-      filePath,
-    ]))
+    ;({ stdout } = await exec(
+      binary,
+      ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', filePath],
+      { signal: deps.signal, maxBuffer: MAX_BUFFER_BYTES },
+    ))
   } catch (cause) {
-    const stderr = (cause as { stderr?: string }).stderr ?? String(cause)
+    // promisify(execFile) attaches `stderr: ''` (not undefined) on ENOENT, so
+    // `??` would keep the empty string; `||` falls through to the full error.
+    const stderr = (cause as { stderr?: string }).stderr || String(cause)
     throw unreadable(filePath, stderr)
   }
 

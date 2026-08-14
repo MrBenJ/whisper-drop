@@ -12,7 +12,7 @@ export const PROGRESS_BANDS = {
 const ETA_THRESHOLD = 0.1
 
 export type JobDeps = {
-  probe: (filePath: string) => Promise<MediaInfo>
+  probe: (filePath: string, signal: AbortSignal) => Promise<MediaInfo>
   extract: (options: {
     inputPath: string
     outputPath: string
@@ -51,6 +51,7 @@ export class TranscriptionJob {
   private readonly listeners = new Set<(state: JobState) => void>()
   private current: JobState
   private cancelled = false
+  private started = false
 
   constructor(
     private readonly deps: JobDeps,
@@ -82,6 +83,10 @@ export class TranscriptionJob {
   }
 
   async start(): Promise<void> {
+    // Guards against a second start() racing a pipeline against the same temp path.
+    if (this.started) return
+    this.started = true
+
     const wavPath = this.deps.tempWavPath(this.id)
 
     try {
@@ -103,7 +108,7 @@ export class TranscriptionJob {
   private async probePhase(): Promise<MediaInfo> {
     this.update({ phase: 'probing', progress: PROGRESS_BANDS.probing.from })
 
-    const media = await this.deps.probe(this.input.filePath)
+    const media = await this.deps.probe(this.input.filePath, this.controller.signal)
     this.throwIfCancelled()
 
     if (!media.hasAudio) {
@@ -114,7 +119,7 @@ export class TranscriptionJob {
       )
     }
 
-    this.current = { ...this.current, media }
+    this.update({ media })
     return media
   }
 
@@ -211,7 +216,14 @@ export class TranscriptionJob {
   private update(patch: Partial<JobState>): void {
     this.current = { ...this.current, ...patch }
     const snapshot = this.snapshot()
-    for (const listener of this.listeners) listener(snapshot)
+    for (const listener of this.listeners) {
+      try {
+        listener(snapshot)
+      } catch {
+        // The job's outcome is already recorded in `this.current`; a broken
+        // subscriber must not be allowed to corrupt it or abort the run.
+      }
+    }
   }
 
   /** Listeners get their own copy, so later mutation cannot reach them. */

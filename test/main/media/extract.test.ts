@@ -76,6 +76,18 @@ describe('extractWav', () => {
     })
   })
 
+  it('attributes a spawn error to FFMPEG_FAILED, carrying the underlying message', async () => {
+    const fake = createFakeChild()
+    const promise = extractWav(OPTIONS, { spawn: () => fake.child })
+
+    fake.child.emit('error', new Error('spawn ffmpeg ENOENT'))
+
+    await expect(promise).rejects.toMatchObject({
+      code: 'FFMPEG_FAILED',
+      detail: expect.stringContaining('spawn ffmpeg ENOENT'),
+    })
+  })
+
   it('kills the process when the signal aborts', async () => {
     const controller = new AbortController()
     const fake = createFakeChild()

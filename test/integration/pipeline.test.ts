@@ -49,7 +49,7 @@ afterAll(async () => {
 function makeJob(filePath: string, id: string) {
   return new TranscriptionJob(
     {
-      probe: (path) => probe(path),
+      probe: (path, signal) => probe(path, { signal }),
       extract: (options) => extractWav(options),
       run: (options, onSegment) =>
         runWhisper({
