@@ -31,3 +31,13 @@ export const CSP_DEVELOPMENT = CSP_PRODUCTION.replace(
 export function cspFor(mode: 'development' | 'production'): string {
   return mode === 'production' ? CSP_PRODUCTION : CSP_DEVELOPMENT
 }
+
+/**
+ * The one call site that decides which policy reaches a build
+ * (`electron.vite.config.ts`'s `transformIndexHtml` hook). Named and exported
+ * so that decision is unit-testable — inverting it would otherwise only be
+ * caught by a manual grep of a packaged build's HTML.
+ */
+export function cspForBuild(isDevServer: boolean): string {
+  return cspFor(isDevServer ? 'development' : 'production')
+}

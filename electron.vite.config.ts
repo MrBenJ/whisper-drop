@@ -1,7 +1,7 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import type { Plugin } from 'vite'
-import { cspFor } from './src/shared/csp.js'
+import { cspForBuild } from './src/shared/csp.js'
 
 /**
  * The CSP is injected here rather than hard-coded in index.html because dev
@@ -13,7 +13,7 @@ function contentSecurityPolicy(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       handler(html, context) {
-        const policy = cspFor(context.server ? 'development' : 'production')
+        const policy = cspForBuild(Boolean(context.server))
         return html.replace(
           '</head>',
           `  <meta http-equiv="Content-Security-Policy" content="${policy}">\n  </head>`,
