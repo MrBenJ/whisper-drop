@@ -1,6 +1,6 @@
-// ffmpeg-static's shipped types resolve to the whole module namespace under
-// NodeNext + esModuleInterop instead of unwrapping the default export. This
-// override restates the (correct) runtime shape: a plain default export.
+// Upstream bug: under NodeNext, ffmpeg-static's CJS `export default` resolves
+// to the whole module namespace instead of `string | null`. Delete this file
+// once upstream's types resolve correctly.
 declare module 'ffmpeg-static' {
   const ffmpegPath: string | null
   export default ffmpegPath
