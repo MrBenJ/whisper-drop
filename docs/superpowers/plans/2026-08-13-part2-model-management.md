@@ -9,6 +9,7 @@
 **Tech Stack:** TypeScript 5 (ESM, `NodeNext`), Vitest 4, Node 22 built-ins only (`node:fs`, `node:crypto`, `node:stream`, global `fetch`). No new runtime dependencies.
 
 **Spec:** `docs/superpowers/specs/2026-08-13-part2-model-management-design.md`
+(This spec doc lands in the same branch as this plan, `part-2-model-management`; it does not exist on `main` until part 2 merges.)
 **Parent spec:** `docs/superpowers/specs/2026-08-13-whisper-drop-design.md` (binding authority)
 
 ## Global Constraints
@@ -128,8 +129,8 @@ describe('CATALOG integrity', () => {
   })
 
   it('has no .en variant above small, which is what forces the partial toggle swap', () => {
-    expect(CATALOG.find((e) => e.id === 'large-v3.en')).toBeUndefined()
-    expect(CATALOG.find((e) => e.id === 'large-v3-turbo.en')).toBeUndefined()
+    expect(CATALOG.find((e) => (e.id as string) === 'large-v3.en')).toBeUndefined()
+    expect(CATALOG.find((e) => (e.id as string) === 'large-v3-turbo.en')).toBeUndefined()
   })
 
   it('orders picker rows ascending by capability', () => {
@@ -388,6 +389,61 @@ describe('createSettingsStore', () => {
   })
 })
 
+describe('reading malformed but structurally-valid JSON', () => {
+  it('falls back to null for an activeModel that is not a known base id', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({ version: 1, activeModel: 'nope' }),
+      'utf8',
+    )
+    expect((await createSettingsStore(dir, 'en-US').read()).activeModel).toBeNull()
+  })
+
+  it('falls back to {} when throughput is not an object', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({ version: 1, throughput: 'bad' }),
+      'utf8',
+    )
+    expect((await createSettingsStore(dir, 'en-US').read()).throughput).toEqual({})
+  })
+
+  it('drops individual throughput entries that are the wrong shape', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        throughput: { base: { realtimeFactor: 12, samples: 3 }, tiny: 'bad', small: { realtimeFactor: 'x' } },
+      }),
+      'utf8',
+    )
+    const settings = await createSettingsStore(dir, 'en-US').read()
+    expect(settings.throughput).toEqual({ base: { realtimeFactor: 12, samples: 3 } })
+  })
+
+  it('falls back to the locale default when englishOnly is not a boolean', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({ version: 1, englishOnly: 'yes' }),
+      'utf8',
+    )
+    expect((await createSettingsStore(dir, 'fr-FR').read()).englishOnly).toBe(false)
+    expect((await createSettingsStore(dir, 'en-US').read()).englishOnly).toBe(true)
+  })
+
+  it('preserves valid fields alongside invalid ones rather than discarding the whole file', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({ version: 1, activeModel: 'nope', throughput: 'bad', language: 'de' }),
+      'utf8',
+    )
+    const settings = await createSettingsStore(dir, 'en-US').read()
+    expect(settings.activeModel).toBeNull()
+    expect(settings.throughput).toEqual({})
+    expect(settings.language).toBe('de')
+  })
+})
+
 describe('recordThroughput', () => {
   it('records a first sample verbatim', async () => {
     const store = createSettingsStore(dir, 'en-US')
@@ -432,9 +488,9 @@ Expected: FAIL — cannot resolve `settings.js`.
 ```ts
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { ModelBaseId, ModelId } from './models/catalog.js'
+import { MODEL_BASE_ORDER, type ModelBaseId, type ModelId } from './models/catalog.js'
 
-const CURRENT_VERSION = 1
+const CURRENT_VERSION = 1 as const
 
 export type Settings = {
   version: typeof CURRENT_VERSION
@@ -455,6 +511,46 @@ export function defaultSettings(locale: string): Settings {
   }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function coerceActiveModel(value: unknown): ModelBaseId | null {
+  if (value === null) return null
+  return typeof value === 'string' && (MODEL_BASE_ORDER as readonly string[]).includes(value)
+    ? (value as ModelBaseId)
+    : null
+}
+
+function isThroughputEntry(value: unknown): value is { realtimeFactor: number; samples: number } {
+  return isPlainObject(value) && typeof value.realtimeFactor === 'number' && typeof value.samples === 'number'
+}
+
+function coerceThroughput(value: unknown): Settings['throughput'] {
+  if (!isPlainObject(value)) return {}
+  const result: Settings['throughput'] = {}
+  for (const [id, entry] of Object.entries(value)) {
+    if (isThroughputEntry(entry)) result[id as ModelId] = entry
+  }
+  return result
+}
+
+/**
+ * Take each field from `parsed` only if it is structurally valid; an invalid
+ * field falls back to the corresponding default rather than discarding the
+ * whole file. Guards against a hand-edited or corrupted settings.json
+ * propagating bad values (e.g. an unknown model id) into the app.
+ */
+function coerceSettings(parsed: Record<string, unknown>, fallback: Settings): Settings {
+  return {
+    version: CURRENT_VERSION,
+    englishOnly: typeof parsed.englishOnly === 'boolean' ? parsed.englishOnly : fallback.englishOnly,
+    activeModel: coerceActiveModel(parsed.activeModel),
+    language: typeof parsed.language === 'string' ? parsed.language : fallback.language,
+    throughput: coerceThroughput(parsed.throughput),
+  }
+}
+
 export function createSettingsStore(dir: string, locale: string) {
   const file = join(dir, 'settings.json')
   const tmp = `${file}.tmp`
@@ -469,9 +565,11 @@ export function createSettingsStore(dir: string, locale: string) {
     }
 
     try {
-      const parsed = JSON.parse(raw) as Settings
-      if (parsed.version !== CURRENT_VERSION) return defaultSettings(locale)
-      return { ...defaultSettings(locale), ...parsed }
+      const parsed: unknown = JSON.parse(raw)
+      if (!isPlainObject(parsed) || parsed.version !== CURRENT_VERSION) {
+        return defaultSettings(locale)
+      }
+      return coerceSettings(parsed, defaultSettings(locale))
     } catch {
       // Keep the bad file so the failure is diagnosable rather than erased.
       await rename(file, corrupt).catch(() => {})
@@ -523,6 +621,11 @@ The delicate module. Read the whole task before starting.
 
 The single most important behaviour here is **what happens when the server ignores a `Range` header**. A server that returns `200` with the full body, when we asked for `bytes=N-`, will silently produce a corrupt file if we append. It must restart instead. There is a dedicated test for it.
 
+Two more failure modes get the same care:
+
+- **An interrupted transfer must not be misclassified as corruption.** A server can close the connection cleanly after sending fewer bytes than the model's full size (most concretely: no `Content-Length`, chunked encoding, and the chunked terminator sent early). `pipeline` then resolves without ever throwing. If we went straight to the digest check, a short-but-otherwise-fine partial would fail its hash and get deleted as `DOWNLOAD_CHECKSUM_MISMATCH` — destroying the exact resumable partial the whole `.part` mechanism exists to keep. Byte count is checked before the digest so a short transfer is reported as `DOWNLOAD_NETWORK_ERROR` and `.part` survives; only a full-length body that still fails its hash is genuine corruption.
+- **The only network requests this app makes are model downloads, and only ever to the pinned catalog host.** `downloadModel` validates `entry.url` against an allow-list before fetching anything, so a catalog entry pointed somewhere else — plausible as a malicious pull request in a public repo — is refused rather than silently fetched.
+
 **Files:**
 - Create: `test/helpers/model-server.ts`
 - Create: `src/main/models/download.ts`
@@ -530,7 +633,7 @@ The single most important behaviour here is **what happens when the server ignor
 
 **Interfaces:**
 - Consumes: `ModelEntry` from `catalog.ts`; `AppError` from `src/shared/errors.ts`.
-- Produces: `DownloadProgress`, `DownloadOptions`, `downloadModel(opts)`.
+- Produces: `DownloadProgress`, `DownloadOptions` (including `allowedHosts`), `downloadModel(opts)`.
 - Test helper produces: `startModelServer(opts)` returning `{ url, close, requests }`.
 
 - [ ] **Step 1: Create the misbehaving test server**
@@ -552,6 +655,16 @@ export type ServerBehaviour =
   | { kind: 'truncate'; afterBytes: number }
   /** Respond with an HTTP error status. */
   | { kind: 'error-status'; status: number }
+  /** Honour Range like 'normal', but write the body in a handful of delayed
+   * chunks so a caller can abort while a download is genuinely in flight. */
+  | { kind: 'slow'; chunkDelayMs: number }
+  /** Send fewer bytes than the model's full size, then end the response with
+   * no `content-length` set — chunked encoding terminates cleanly even
+   * though the transfer was actually interrupted upstream. */
+  | { kind: 'short-body'; sendBytes: number }
+  /** Answer a Range request with 206 but echo a Content-Range start that
+   * doesn't match what was requested. */
+  | { kind: 'bad-range' }
 
 export type ModelServer = {
   url: string
@@ -576,6 +689,14 @@ export async function startModelServer(
       return
     }
 
+    if (behaviour.kind === 'short-body') {
+      // No content-length: the chunked encoding still terminates cleanly,
+      // even though far fewer bytes than the model's real size were sent.
+      res.writeHead(200)
+      res.end(body.subarray(0, behaviour.sendBytes))
+      return
+    }
+
     const payload = behaviour.kind === 'wrong-bytes'
       ? Buffer.alloc(body.length, 0x00)
       : body
@@ -583,7 +704,49 @@ export async function startModelServer(
     if (behaviour.kind === 'truncate') {
       res.writeHead(200, { 'content-length': String(payload.length) })
       res.write(payload.subarray(0, behaviour.afterBytes))
-      res.destroy()
+      // A same-tick destroy() can kill the socket before the client even
+      // finishes reading the response headers, which surfaces as a fetch()
+      // failure rather than a body-stream failure — the wrong branch for a
+      // test about a connection dropping mid-transfer. The delay lets the
+      // headers and first bytes land before the reset.
+      setTimeout(() => res.destroy(), 20)
+      return
+    }
+
+    if (behaviour.kind === 'bad-range') {
+      const start = Number(/bytes=(\d+)-/.exec(req.headers.range ?? '')?.[1] ?? 0)
+      const slice = payload.subarray(start)
+      res.writeHead(206, {
+        'content-length': String(slice.length),
+        // Off by one from the offset actually requested/served.
+        'content-range': `bytes ${start + 1}-${payload.length - 1}/${payload.length}`,
+      })
+      res.end(slice)
+      return
+    }
+
+    if (behaviour.kind === 'slow') {
+      res.on('error', () => {})
+      const range = req.headers.range
+      const start = range ? Number(/bytes=(\d+)-/.exec(range)?.[1] ?? 0) : 0
+      const slice = payload.subarray(start)
+      const headers: Record<string, string> = { 'content-length': String(slice.length) }
+      if (range) headers['content-range'] = `bytes ${start}-${payload.length - 1}/${payload.length}`
+      res.writeHead(range ? 206 : 200, headers)
+
+      const chunkSize = Math.max(1, Math.ceil(slice.length / 4))
+      let offset = 0
+      const writeNext = (): void => {
+        if (res.destroyed || res.writableEnded) return
+        if (offset >= slice.length) {
+          res.end()
+          return
+        }
+        res.write(slice.subarray(offset, offset + chunkSize))
+        offset += chunkSize
+        setTimeout(writeNext, behaviour.chunkDelayMs)
+      }
+      writeNext()
       return
     }
 
@@ -648,6 +811,15 @@ function entryFor(url: string, overrides: Partial<ModelEntry> = {}): ModelEntry 
   }
 }
 
+// downloadModel's default trust boundary only allows huggingface.co; every
+// test that actually needs to talk to the local test server opts into that
+// host explicitly rather than relying on the real default.
+const LOCAL_HOSTS = ['127.0.0.1']
+
+function download(opts: Parameters<typeof downloadModel>[0]) {
+  return downloadModel({ allowedHosts: LOCAL_HOSTS, ...opts })
+}
+
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'wd-download-'))
 })
@@ -663,7 +835,7 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY)
     const dest = join(dir, 'model.bin')
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest })
+    await download({ entry: entryFor(server.url), destPath: dest })
 
     expect(await readFile(dest)).toEqual(BODY)
   })
@@ -672,7 +844,7 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY)
     const dest = join(dir, 'model.bin')
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest })
+    await download({ entry: entryFor(server.url), destPath: dest })
 
     await expect(stat(`${dest}.part`)).rejects.toThrow()
   })
@@ -682,7 +854,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
     const onProgress = vi.fn()
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest, onProgress })
+    await download({ entry: entryFor(server.url), destPath: dest, onProgress })
 
     expect(onProgress).toHaveBeenCalled()
     const last = onProgress.mock.calls.at(-1)?.[0]
@@ -695,7 +867,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
     await writeFile(`${dest}.part`, BODY.subarray(0, 10))
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest })
+    await download({ entry: entryFor(server.url), destPath: dest })
 
     expect(await readFile(dest)).toEqual(BODY)
     expect(server.requests.at(-1)).toBe('bytes=10-')
@@ -706,7 +878,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
     await writeFile(`${dest}.part`, BODY.subarray(0, 10))
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest })
+    await download({ entry: entryFor(server.url), destPath: dest })
 
     // Appending a full body to a 10-byte partial would give a longer, corrupt file.
     expect(await readFile(dest)).toEqual(BODY)
@@ -717,8 +889,25 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
     await writeFile(`${dest}.part`, Buffer.concat([BODY, BODY]))
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest })
+    await download({ entry: entryFor(server.url), destPath: dest })
 
+    expect(await readFile(dest)).toEqual(BODY)
+  })
+
+  it('restarts from zero when the server echoes a Content-Range start that does not match the request', async () => {
+    server = await startModelServer(BODY, { kind: 'bad-range' })
+    const dest = join(dir, 'model.bin')
+    await writeFile(`${dest}.part`, BODY.subarray(0, 10))
+
+    // The response can't be trusted, so this attempt fails rather than
+    // risking bytes spliced in at the wrong offset...
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+    // ...but the partial is discarded, so the next attempt starts clean and succeeds.
+    await expect(stat(`${dest}.part`)).rejects.toThrow()
+    await download({ entry: entryFor(server.url), destPath: dest })
     expect(await readFile(dest)).toEqual(BODY)
   })
 
@@ -727,7 +916,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
 
     await expect(
-      downloadModel({ entry: entryFor(server.url), destPath: dest }),
+      download({ entry: entryFor(server.url), destPath: dest }),
     ).rejects.toMatchObject({ code: 'DOWNLOAD_CHECKSUM_MISMATCH' })
   })
 
@@ -735,7 +924,7 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY, { kind: 'wrong-bytes' })
     const dest = join(dir, 'model.bin')
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
+    await download({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
 
     await expect(stat(`${dest}.part`)).rejects.toThrow()
   })
@@ -744,9 +933,30 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY, { kind: 'wrong-bytes' })
     const dest = join(dir, 'model.bin')
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
+    await download({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
 
     await expect(stat(dest)).rejects.toThrow()
+  })
+
+  it('throws DOWNLOAD_NETWORK_ERROR, not DOWNLOAD_CHECKSUM_MISMATCH, when a clean response is short', async () => {
+    // No content-length; the server ends the chunked response cleanly after
+    // only 10 bytes. pipeline() resolves without throwing, so this only stays
+    // out of the checksum-mismatch path because byte count is checked first.
+    server = await startModelServer(BODY, { kind: 'short-body', sendBytes: 10 })
+    const dest = join(dir, 'model.bin')
+
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+  })
+
+  it('keeps .part after a clean short response, since it is resumable', async () => {
+    server = await startModelServer(BODY, { kind: 'short-body', sendBytes: 10 })
+    const dest = join(dir, 'model.bin')
+
+    await download({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
+
+    expect((await stat(`${dest}.part`)).size).toBeGreaterThan(0)
   })
 
   it('throws DOWNLOAD_NETWORK_ERROR on an HTTP error status', async () => {
@@ -754,7 +964,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
 
     await expect(
-      downloadModel({ entry: entryFor(server.url), destPath: dest }),
+      download({ entry: entryFor(server.url), destPath: dest }),
     ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
   })
 
@@ -763,7 +973,7 @@ describe('downloadModel', () => {
     const dest = join(dir, 'model.bin')
 
     await expect(
-      downloadModel({
+      download({
         entry: entryFor(server.url),
         destPath: dest,
         freeBytesImpl: async () => 1,
@@ -779,7 +989,7 @@ describe('downloadModel', () => {
     controller.abort()
 
     await expect(
-      downloadModel({
+      download({
         entry: entryFor(server.url),
         destPath: join(dir, 'model.bin'),
         signal: controller.signal,
@@ -793,9 +1003,135 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY, { kind: 'truncate', afterBytes: 12 })
     const dest = join(dir, 'model.bin')
 
-    await downloadModel({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
+    await download({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
 
     expect((await stat(`${dest}.part`)).size).toBeGreaterThan(0)
+  })
+
+  describe('aborting mid-stream', () => {
+    // The only cancellation test above aborts before any fetch happens at
+    // all — it never exercises cancellation of a download actually in
+    // flight. Part 1 made exactly this mistake once already. 'slow' writes
+    // the body in delayed chunks so these tests can abort mid-transfer for real.
+
+    // Aborting on the very first progress event races the write of that
+    // first chunk to disk; waiting for a second one gives the write time to
+    // land, so `.part` reliably has real bytes in it when we check.
+    function abortOnSecondProgress(controller: AbortController): () => void {
+      let count = 0
+      return () => {
+        count += 1
+        if (count === 2) controller.abort()
+      }
+    }
+
+    it('rejects with a plain Error distinguishable from a network failure', async () => {
+      server = await startModelServer(BODY, { kind: 'slow', chunkDelayMs: 25 })
+      const dest = join(dir, 'model.bin')
+      const controller = new AbortController()
+
+      const promise = download({
+        entry: entryFor(server.url),
+        destPath: dest,
+        signal: controller.signal,
+        onProgress: abortOnSecondProgress(controller),
+      })
+
+      let error: unknown
+      try {
+        await promise
+      } catch (caught) {
+        error = caught
+      }
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toMatch(/abort/i)
+      // AppError always carries a `code`; cancellation must not look like one.
+      expect((error as { code?: unknown }).code).toBeUndefined()
+    })
+
+    it('leaves a non-empty .part file behind', async () => {
+      server = await startModelServer(BODY, { kind: 'slow', chunkDelayMs: 25 })
+      const dest = join(dir, 'model.bin')
+      const controller = new AbortController()
+
+      await download({
+        entry: entryFor(server.url),
+        destPath: dest,
+        signal: controller.signal,
+        onProgress: abortOnSecondProgress(controller),
+      }).catch(() => {})
+
+      const size = (await stat(`${dest}.part`)).size
+      expect(size).toBeGreaterThan(0)
+      expect(size).toBeLessThan(BODY.length)
+    })
+
+    it('resumes and completes successfully on a later attempt', async () => {
+      server = await startModelServer(BODY, { kind: 'slow', chunkDelayMs: 25 })
+      const dest = join(dir, 'model.bin')
+      const controller = new AbortController()
+
+      await download({
+        entry: entryFor(server.url),
+        destPath: dest,
+        signal: controller.signal,
+        onProgress: abortOnSecondProgress(controller),
+      }).catch(() => {})
+
+      await download({ entry: entryFor(server.url), destPath: dest })
+
+      expect(await readFile(dest)).toEqual(BODY)
+      expect(server.requests.at(-1)).toMatch(/^bytes=\d+-$/)
+    })
+  })
+
+  describe('the download host allow-list', () => {
+    // entry.url is the app's only network request, and the catalog is the
+    // only place it comes from — but in a public repo, a catalog entry
+    // pointed somewhere else is a plausible malicious pull request. These
+    // checks must fire before any fetch happens.
+
+    it('rejects a plain http URL before any fetch', async () => {
+      const fetchImpl = vi.fn()
+
+      await expect(
+        downloadModel({
+          entry: entryFor('http://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'),
+          destPath: join(dir, 'model.bin'),
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+
+    it('rejects a URL on a host other than huggingface.co before any fetch', async () => {
+      const fetchImpl = vi.fn()
+
+      await expect(
+        downloadModel({
+          entry: entryFor('https://evil.example.com/ggml-tiny.bin'),
+          destPath: join(dir, 'model.bin'),
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+
+    it('defaults to allowing only huggingface.co, so the escape hatch cannot silently widen', async () => {
+      server = await startModelServer(BODY)
+      const dest = join(dir, 'model.bin')
+
+      // No allowedHosts override: exercises the real default against the
+      // local server's non-huggingface host.
+      await expect(
+        downloadModel({ entry: entryFor(server.url), destPath: dest }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(server.requests).toEqual([])
+    })
   })
 })
 ```
@@ -820,6 +1156,14 @@ import type { ModelEntry } from './catalog.js'
 /** Refuse a download that would leave the disk this close to full. */
 const HEADROOM_BYTES = 64 * 1024 * 1024
 
+/**
+ * Trust boundary: the app's only network requests are model downloads, and
+ * those only ever go to the pinned HuggingFace host. A catalog entry
+ * pointing anywhere else — plausible as a malicious pull request in a public
+ * repo — is refused before a single byte is fetched.
+ */
+const DEFAULT_ALLOWED_HOSTS: readonly string[] = ['huggingface.co']
+
 export type DownloadProgress = {
   id: ModelEntry['id']
   receivedBytes: number
@@ -835,6 +1179,9 @@ export type DownloadOptions = {
   fetchImpl?: typeof fetch
   freeBytesImpl?: (dir: string) => Promise<number>
   now?: () => number
+  /** Hosts trusted as a download source. Defaults to HuggingFace only; tests
+   * override this to point at a local server. */
+  allowedHosts?: string[]
 }
 
 async function freeBytesOn(dir: string): Promise<number> {
@@ -851,6 +1198,27 @@ async function partialSize(path: string): Promise<number> {
   }
 }
 
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost'
+}
+
+/**
+ * A host in `allowedHosts` is trusted over https. Loopback hosts are also
+ * trusted over plain http, since the only thing that ever names one is a
+ * local test server — never a value that came from the catalog.
+ */
+function assertTrustedSource(url: string, allowedHosts: readonly string[]): void {
+  const { protocol, hostname } = new URL(url)
+  const trusted = allowedHosts.includes(hostname) && (protocol === 'https:' || isLoopbackHost(hostname))
+  if (!trusted) {
+    throw new AppError(
+      'DOWNLOAD_NETWORK_ERROR',
+      `Refused to download from untrusted source: ${protocol}//${hostname}`,
+      `url=${url} allowedHosts=${allowedHosts.join(', ')}`,
+    )
+  }
+}
+
 export async function downloadModel(options: DownloadOptions): Promise<void> {
   const {
     entry,
@@ -860,9 +1228,11 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     fetchImpl = fetch,
     freeBytesImpl = freeBytesOn,
     now = Date.now,
+    allowedHosts = DEFAULT_ALLOWED_HOSTS,
   } = options
 
   if (signal?.aborted) throw new Error('downloadModel: aborted before starting')
+  assertTrustedSource(entry.url, allowedHosts)
 
   const partPath = `${destPath}.part`
 
@@ -907,10 +1277,27 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
   // A 200 to a ranged request means the server ignored the header and is
   // sending the whole body. Appending it to the partial would silently produce
   // a corrupt file of the wrong length, so start over instead.
-  const append = resumeFrom > 0 && response.status === 206
+  let append = resumeFrom > 0 && response.status === 206
   if (resumeFrom > 0 && !append) {
     await rm(partPath, { force: true })
     resumeFrom = 0
+  }
+
+  if (append) {
+    const contentRange = response.headers.get('content-range')
+    const start = contentRange ? Number(/bytes (\d+)-/.exec(contentRange)?.[1]) : undefined
+    if (contentRange && start !== resumeFrom) {
+      // The header doesn't match what we asked for, so we can't trust which
+      // bytes this response actually holds. Discard the partial rather than
+      // risk splicing bytes in at the wrong position — the next attempt
+      // starts clean.
+      await rm(partPath, { force: true })
+      throw new AppError(
+        'DOWNLOAD_NETWORK_ERROR',
+        'The model server returned an unexpected byte range.',
+        `requested ${resumeFrom}, got ${contentRange}`,
+      )
+    }
   }
 
   const hash = createHash('sha256')
@@ -956,6 +1343,18 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     )
   }
 
+  // A clean end short of the expected length is an interrupted transfer, not
+  // corruption — keep the partial so a later attempt can resume it. Only a
+  // full-length body that still fails the digest is genuine corruption, which
+  // is why byte count is checked before the digest, not after.
+  if (received < entry.bytes) {
+    throw new AppError(
+      'DOWNLOAD_NETWORK_ERROR',
+      'The download was interrupted.',
+      `received ${received} of ${entry.bytes} bytes`,
+    )
+  }
+
   if (hash.digest('hex') !== entry.sha256) {
     await rm(partPath, { force: true })
     throw new AppError(
@@ -972,7 +1371,7 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run test/main/models/download.test.ts`
-Expected: PASS. If the truncation test is flaky, the destroyed socket may surface as either a pipeline error or a checksum mismatch — both are acceptable outcomes for that test, so assert only that `.part` survives, which the test already does.
+Expected: PASS. The destroyed socket in the truncation test may surface either as a `pipeline` error (caught directly) or as a clean-but-short stream that fails the byte-count check — both land on `DOWNLOAD_NETWORK_ERROR` with `.part` intact, never on a checksum mismatch, since byte count is checked before the digest. The test asserts only that `.part` survives, which holds either way.
 
 - [ ] **Step 6: Commit**
 
@@ -993,19 +1392,28 @@ The thin layer over the models directory that the rest of the app talks to.
 
 **Interfaces:**
 - Consumes: `catalog.ts`, `download.ts`, `AppError`.
-- Produces: `createModelStore(dir)` returning `{ modelsDir, pathFor, isInstalled, listInstalled, remove, install }`.
+- Produces: `createModelStore(dir)` returning `{ modelsDir, pathFor, isInstalled, verify, listInstalled, remove, install }`; `InstallOptions.force`.
+
+`isInstalled` stays a cheap size-only check — the plan does not change that trade-off. `verify` is the full-hash repair path: it exists for a user who hits an opaque whisper failure and wants to rule out a corrupt model, and is never called automatically (re-hashing up to 3.1 GB on every launch is not acceptable). `InstallOptions.force` lets a bad model be re-downloaded without hunting for the file on disk.
 
 - [ ] **Step 1: Write the failing tests**
 
 Create `test/main/models/store.test.ts`:
 
 ```ts
+import { createHash } from 'node:crypto'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createModelStore } from '../../../src/main/models/store.js'
-import { entryFor } from '../../../src/main/models/catalog.js'
+import { entryFor, type ModelEntry, type ModelId } from '../../../src/main/models/catalog.js'
+
+/** A small, real-hashable stand-in for a catalog entry, so verify() tests
+ * don't need an actual multi-hundred-megabyte model file. */
+function fakeEntry(id: ModelId, bytes: number, sha256: string): ModelEntry {
+  return { id, base: 'tiny', label: 'Test', bytes, sha256, url: 'http://example.test/model.bin', blurb: 'test', englishOnly: false }
+}
 
 let dir: string
 
@@ -1071,7 +1479,7 @@ describe('createModelStore', () => {
   })
 
   it('creates the models directory and delegates to the downloader on install', async () => {
-    const download = vi.fn(async () => {})
+    const download = vi.fn(async (_options: unknown) => {})
     const store = createModelStore(dir, download)
 
     await store.install('tiny')
@@ -1083,7 +1491,7 @@ describe('createModelStore', () => {
   })
 
   it('passes progress and abort through to the downloader', async () => {
-    const download = vi.fn(async () => {})
+    const download = vi.fn(async (_options: unknown) => {})
     const store = createModelStore(dir, download)
     const controller = new AbortController()
     const onProgress = vi.fn()
@@ -1105,6 +1513,46 @@ describe('createModelStore', () => {
 
     expect(download).not.toHaveBeenCalled()
   })
+
+  it('re-downloads with force even when already installed', async () => {
+    const download = vi.fn(async () => {})
+    const store = createModelStore(dir, download)
+    await mkdir(join(dir, 'models'), { recursive: true })
+    await writeFile(store.pathFor('tiny'), Buffer.alloc(entryFor('tiny').bytes))
+
+    await store.install('tiny', { force: true })
+
+    expect(download).toHaveBeenCalledTimes(1)
+  })
+
+  describe('verify', () => {
+    it('returns true for a file whose contents actually hash correctly', async () => {
+      const content = Buffer.from('deterministic test content for hashing')
+      const sha256 = createHash('sha256').update(content).digest('hex')
+      const store = createModelStore(dir, vi.fn(), () => fakeEntry('tiny', content.length, sha256))
+      await mkdir(join(dir, 'models'), { recursive: true })
+      await writeFile(store.pathFor('tiny'), content)
+
+      expect(await store.verify('tiny')).toBe(true)
+    })
+
+    it('returns false for a same-size file with wrong contents, which isInstalled cannot catch', async () => {
+      const content = Buffer.from('deterministic test content for hashing')
+      const sha256 = createHash('sha256').update(content).digest('hex')
+      const store = createModelStore(dir, vi.fn(), () => fakeEntry('tiny', content.length, sha256))
+      await mkdir(join(dir, 'models'), { recursive: true })
+      await writeFile(store.pathFor('tiny'), Buffer.alloc(content.length, 0x00))
+
+      expect(await store.isInstalled('tiny')).toBe(true)
+      expect(await store.verify('tiny')).toBe(false)
+    })
+
+    it('returns false for a missing file', async () => {
+      const store = createModelStore(dir, vi.fn(), () => fakeEntry('tiny', 10, 'a'.repeat(64)))
+
+      expect(await store.verify('tiny')).toBe(false)
+    })
+  })
 })
 ```
 
@@ -1116,36 +1564,60 @@ Expected: FAIL — cannot resolve `store.js`.
 - [ ] **Step 3: Implement `src/main/models/store.ts`**
 
 ```ts
+import { createHash } from 'node:crypto'
+import { createReadStream } from 'node:fs'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { CATALOG, entryFor, type ModelId } from './catalog.js'
+import { pipeline } from 'node:stream/promises'
+import { CATALOG, entryFor, type ModelEntry, type ModelId } from './catalog.js'
 import { downloadModel, type DownloadOptions, type DownloadProgress } from './download.js'
 
 export type InstallOptions = {
   onProgress?: (progress: DownloadProgress) => void
   signal?: AbortSignal
+  /** Re-download even if the model already looks installed. */
+  force?: boolean
 }
 
 type Downloader = (options: DownloadOptions) => Promise<void>
 
-export function createModelStore(dir: string, download: Downloader = downloadModel) {
+/**
+ * On-disk model state. `isInstalled` is a cheap size-only check — fast enough
+ * to run on every launch, but a same-size file with corrupted contents still
+ * reads as installed. `verify` is the authoritative check: a full streaming
+ * SHA-256 against the catalog. It is not called on startup; it exists so a
+ * user hitting an opaque whisper failure can re-check a model, and `force`
+ * lets a bad one be re-downloaded without hunting for the file on disk.
+ */
+export function createModelStore(
+  dir: string,
+  download: Downloader = downloadModel,
+  lookup: (id: ModelId) => ModelEntry = entryFor,
+) {
   const modelsDir = join(dir, 'models')
 
   function pathFor(id: ModelId): string {
     return join(modelsDir, `${id}.bin`)
   }
 
-  /**
-   * Size is checked against the catalog, not just existence: a truncated file
-   * is not installed. Cheap enough to run on every launch, unlike re-hashing
-   * gigabytes.
-   */
   async function isInstalled(id: ModelId): Promise<boolean> {
     try {
-      return (await stat(pathFor(id))).size === entryFor(id).bytes
+      return (await stat(pathFor(id))).size === lookup(id).bytes
     } catch {
       return false
     }
+  }
+
+  async function verify(id: ModelId): Promise<boolean> {
+    const hash = createHash('sha256')
+    try {
+      await pipeline(createReadStream(pathFor(id)), async function* (source) {
+        for await (const chunk of source) hash.update(chunk as Buffer)
+      })
+    } catch {
+      return false
+    }
+    return hash.digest('hex') === lookup(id).sha256
   }
 
   async function listInstalled(): Promise<ModelId[]> {
@@ -1169,18 +1641,18 @@ export function createModelStore(dir: string, download: Downloader = downloadMod
   }
 
   async function install(id: ModelId, options: InstallOptions = {}): Promise<void> {
-    if (await isInstalled(id)) return
+    if (!options.force && (await isInstalled(id))) return
 
     await mkdir(modelsDir, { recursive: true })
     await download({
-      entry: entryFor(id),
+      entry: lookup(id),
       destPath: pathFor(id),
       onProgress: options.onProgress,
       signal: options.signal,
     })
   }
 
-  return { modelsDir, pathFor, isInstalled, listInstalled, remove, install }
+  return { modelsDir, pathFor, isInstalled, verify, listInstalled, remove, install }
 }
 ```
 
@@ -1209,7 +1681,11 @@ git commit -m "feat: add on-disk model store"
 - `npm run typecheck` is clean.
 - No module under `src/main/` imports `electron`.
 - A download interrupted mid-flight resumes; one that returns wrong bytes is rejected and cleaned up; one whose server ignores `Range` restarts rather than corrupting.
-- Corrupt settings do not prevent startup.
+- A clean-but-short transfer (server closes without sending the full declared size) is reported as `DOWNLOAD_NETWORK_ERROR` with `.part` kept, never as `DOWNLOAD_CHECKSUM_MISMATCH` — an interrupted download must stay resumable, not get treated as corrupt.
+- Aborting a download genuinely in flight (not just before the first byte) rejects with a plain `Error` whose message contains "aborted", distinguishable from `AppError('DOWNLOAD_NETWORK_ERROR')`, and a later attempt resumes from the surviving `.part` to a correct file.
+- `downloadModel` refuses any `entry.url` that isn't `https://huggingface.co/...` before fetching anything; the default `allowedHosts` is HuggingFace-only.
+- `store.verify` gives a full-hash answer `isInstalled`'s size check cannot, and `install({ force: true })` re-downloads a model that already looks installed.
+- Corrupt settings do not prevent startup, and malformed fields in an otherwise-valid `settings.json` (e.g. an unknown `activeModel`) fall back to defaults field-by-field rather than propagating bad values or discarding the whole file.
 
 ## What Part 3 picks up
 
