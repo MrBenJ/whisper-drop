@@ -117,6 +117,7 @@ Modules under `src/main/` other than `ipc/` must not import `electron`.
 
 | Module | Responsibility | Nature |
 |---|---|---|
+| `binaries` | resolve `whisper-cli`, `ffmpeg`, `ffprobe` paths | pure lookup |
 | `media/probe` | `ffprobe` a path → `MediaInfo` | wrapper |
 | `media/extract` | any media file → 16 kHz mono WAV in temp, with progress | wrapper |
 | `whisper/parse` | whisper-cli stdout lines → `Segment[]` | **pure** |
@@ -146,13 +147,14 @@ whisper-drop/
 │  │  ├─ whisper/{runner.ts, parse.ts}
 │  │  ├─ models/{catalog.ts, download.ts, store.ts}
 │  │  ├─ export/formatters.ts
+│  │  ├─ binaries.ts
 │  │  └─ settings.ts
 │  ├─ preload/index.ts
 │  ├─ renderer/
 │  └─ shared/types.ts
-├─ resources/                 # gitignored; populated by fetch-binaries
-├─ scripts/fetch-binaries.mjs
-├─ binaries.manifest.json
+├─ resources/                 # gitignored; populated by build-whisper
+├─ scripts/build-whisper.mjs
+├─ whisper.manifest.json
 ├─ test/fixtures/
 ├─ docs/superpowers/specs/
 ├─ electron.vite.config.ts
@@ -208,6 +210,7 @@ type JobPhase =
   | 'probing' | 'preparing' | 'transcribing'
   | 'done' | 'cancelled' | 'failed'
 
+// Serialisable: this crosses the IPC boundary, so it holds plain data only.
 type JobState = {
   id: string
   filePath: string
@@ -216,7 +219,10 @@ type JobState = {
   progress: number        // 0..1, spans all phases
   etaMs?: number
   segments: Segment[]
-  error?: AppError
+  // durationMs / transcribeElapsedMs. Present only once phase is 'done'.
+  // This is what feeds Settings.throughput.
+  realtimeFactor?: number
+  error?: { code: ErrorCode; message: string; detail?: string }
 }
 
 type ErrorCode =
@@ -226,6 +232,8 @@ type ErrorCode =
   | 'DOWNLOAD_CHECKSUM_MISMATCH' | 'DOWNLOAD_NETWORK_ERROR'
   | 'WHISPER_FAILED' | 'FFMPEG_FAILED'
 
+// Implemented as a throwable class extending Error, with a toJSON() producing
+// the plain shape above for JobState.error.
 type AppError = {
   code: ErrorCode
   message: string         // plain language, shown directly
@@ -452,23 +460,27 @@ Cancellation is not an error and produces no error UI.
 
 Binaries are not committed to the repository.
 
-`scripts/fetch-binaries.mjs` runs on `postinstall`, reads
-`binaries.manifest.json`, and downloads the `whisper-cli`, `ffmpeg`, and
-`ffprobe` builds matching the host platform and architecture into
-`resources/<platform>-<arch>/`, verifying each against a pinned sha256.
+**ffmpeg and ffprobe** come from the `ffmpeg-static` and `ffprobe-static` npm
+packages, which already handle per-platform binary fetching. `src/main/binaries.ts`
+is the only module that knows where they live.
+
+**whisper.cpp** is built from source at a tag pinned in `whisper.manifest.json`.
+`scripts/build-whisper.mjs` clones the tag, builds it **statically**
+(`-DBUILD_SHARED_LIBS=OFF`, plus `-DGGML_METAL_EMBED_LIBRARY=ON` on macOS) so
+the result is one self-contained executable, and copies it to
+`resources/<platform>-<arch>/`. It is idempotent, keyed on the tag.
 `electron-builder`'s `extraResources` packs only the matching directory.
 
 `WHISPER_DROP_WHISPER_BIN` overrides the resolved `whisper-cli` path, for
 developing against a local whisper.cpp build.
 
-GitHub Actions builds `whisper.cpp` from a pinned upstream tag for macOS arm64,
-macOS x64, Windows x64, and Linux x64, and publishes the results as release
-assets that the manifest points at. Upstream's own prebuilt coverage is
-inconsistent across platforms, so owning the build is both more reliable and
-more transparent about what ships.
+GitHub Actions runs that same build for macOS arm64, macOS x64, Windows x64, and
+Linux x64, caching the result per tag and attaching it to releases. Upstream's
+own prebuilt coverage is inconsistent across platforms, so owning the build is
+both more reliable and more transparent about what ships.
 
-The upstream tag must be one where the CLI is named `whisper-cli`; it was
-renamed from `main` and the manifest pins a version accordingly.
+The pinned tag must be one where the CLI is named `whisper-cli`; it was renamed
+from `main` in earlier versions. The initial pin is `v1.9.2`.
 
 ## Testing
 
