@@ -49,8 +49,9 @@ export async function extractWav(options: ExtractOptions, deps: ExtractDeps = {}
     stderrTail = (stderrTail + String(chunk)).slice(-STDERR_TAIL_BYTES)
   })
 
+  let lines: ReturnType<typeof createInterface> | undefined
   if (onProgress) {
-    const lines = createInterface({ input: child.stdout })
+    lines = createInterface({ input: child.stdout })
     lines.on('line', (line) => {
       const match = /^out_time_us=(\d+)$/.exec(line.trim())
       if (!match) return
@@ -84,5 +85,6 @@ export async function extractWav(options: ExtractOptions, deps: ExtractDeps = {}
     }
   } finally {
     signal?.removeEventListener('abort', onAbort)
+    lines?.close()
   }
 }

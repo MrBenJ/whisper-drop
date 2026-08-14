@@ -26,6 +26,19 @@ describe('extractWav', () => {
     expect(onProgress).toHaveBeenCalledWith(0.5)
   })
 
+  it('reassembles an out_time_us line split across two stdout writes', async () => {
+    const fake = createFakeChild()
+    const onProgress = vi.fn()
+    const promise = extractWav({ ...OPTIONS, onProgress }, { spawn: () => fake.child })
+
+    fake.emitStdout('out_time_us=25')
+    fake.emitStdout('00000\nprogress=continue\n')
+    fake.exit(0)
+    await promise
+
+    expect(onProgress).toHaveBeenCalledWith(0.25)
+  })
+
   it('clamps progress to 1 when ffmpeg overshoots the probed duration', async () => {
     const fake = createFakeChild()
     const onProgress = vi.fn()
