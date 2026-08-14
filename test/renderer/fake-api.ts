@@ -40,6 +40,8 @@ export type FakeApi = {
   emitProgress: (progress: DownloadProgress) => void
   /** How many subscribers are live — asserts effects clean up on unmount. */
   stateSubscribers: () => number
+  /** Same, for `models.onProgress` subscribers. */
+  progressSubscribers: () => number
 }
 
 export function installFakeApi(overrides: Partial<WhisperDropApi> = {}): FakeApi {
@@ -92,5 +94,6 @@ export function installFakeApi(overrides: Partial<WhisperDropApi> = {}): FakeApi
       for (const listener of [...progressListeners]) listener(progress)
     },
     stateSubscribers: () => stateListeners.size,
+    progressSubscribers: () => progressListeners.size,
   }
 }
