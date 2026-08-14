@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { downloadModel } from '../../../src/main/models/download.js'
+import { downloadModel, HEADROOM_BYTES } from '../../../src/main/models/download.js'
 import type { ModelEntry } from '../../../src/main/models/catalog.js'
 import { startModelServer, type ModelServer } from '../../helpers/model-server.js'
 
@@ -154,6 +154,18 @@ describe('downloadModel', () => {
     expect(await readFile(dest)).toEqual(BODY)
   })
 
+  it('restarts from zero when a 206 response omits Content-Range entirely, rather than trusting an unvalidated append', async () => {
+    server = await startModelServer(BODY, { kind: 'no-content-range' })
+    const dest = join(dir, 'model.bin')
+    await writeFile(`${dest}.part`, BODY.subarray(0, 10))
+
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+    await expect(stat(`${dest}.part`)).rejects.toThrow()
+  })
+
   it('throws DOWNLOAD_CHECKSUM_MISMATCH when the bytes are wrong', async () => {
     server = await startModelServer(BODY, { kind: 'wrong-bytes' })
     const dest = join(dir, 'model.bin')
@@ -226,6 +238,30 @@ describe('downloadModel', () => {
     expect(server.requests).toEqual([])
   })
 
+  it('succeeds when free space covers only the remainder needed to resume, not the full size', async () => {
+    // freeBytesImpl: async () => 1 (used above) fails against any formula,
+    // including a buggy one that checks entry.bytes + HEADROOM and ignores
+    // the existing partial entirely. This free value is chosen to be enough
+    // for (remainder + headroom) but short of (full size + headroom), which
+    // is exactly what discriminates the correct formula from that bug.
+    server = await startModelServer(BODY)
+    const dest = join(dir, 'model.bin')
+    const partial = BODY.subarray(0, 10)
+    await writeFile(`${dest}.part`, partial)
+
+    const remaining = BODY.length - partial.length
+    const free = remaining + HEADROOM_BYTES
+    expect(free).toBeLessThan(BODY.length + HEADROOM_BYTES)
+
+    await download({
+      entry: entryFor(server.url),
+      destPath: dest,
+      freeBytesImpl: async () => free,
+    })
+
+    expect(await readFile(dest)).toEqual(BODY)
+  })
+
   it('rejects immediately when the signal is already aborted', async () => {
     server = await startModelServer(BODY)
     const controller = new AbortController()
@@ -246,9 +282,26 @@ describe('downloadModel', () => {
     server = await startModelServer(BODY, { kind: 'truncate', afterBytes: 12 })
     const dest = join(dir, 'model.bin')
 
-    await download({ entry: entryFor(server.url), destPath: dest }).catch(() => {})
+    // Both possible paths here (a stream error, or a clean-but-short end)
+    // land on DOWNLOAD_NETWORK_ERROR, so this is strictly stronger than
+    // just checking the .part file survives.
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
 
     expect((await stat(`${dest}.part`)).size).toBeGreaterThan(0)
+  })
+
+  it('caps bytes written when the server sends more than entry.bytes, so a disk-filling stream cannot fill the disk', async () => {
+    server = await startModelServer(BODY, { kind: 'overlong', extraBytes: 1024 })
+    const dest = join(dir, 'model.bin')
+
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+    const size = await stat(`${dest}.part`).then((s) => s.size, () => 0)
+    expect(size).toBeLessThanOrEqual(BODY.length)
   })
 
   describe('aborting mid-stream', () => {

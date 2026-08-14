@@ -8,7 +8,7 @@ import { AppError } from '../../shared/errors.js'
 import { MODEL_URL_PREFIX, type ModelEntry } from './catalog.js'
 
 /** Refuse a download that would leave the disk this close to full. */
-const HEADROOM_BYTES = 64 * 1024 * 1024
+export const HEADROOM_BYTES = 64 * 1024 * 1024
 
 /**
  * Trust boundary: the app's only network requests are model downloads, and
@@ -36,11 +36,11 @@ export type DownloadOptions = {
   freeBytesImpl?: (dir: string) => Promise<number>
   now?: () => number
   /**
-   * Test seam only: additional URL prefixes trusted as a download source,
-   * checked in place of the default pinned HuggingFace prefix. Production
-   * callers must never set this — `createModelStore`'s `install` builds its
-   * own `DownloadOptions` and does not forward it, so IPC cannot reach it
-   * even by accident. Exists so tests can point at a local server.
+   * Test seam only: when set, replaces the default trusted prefix entirely
+   * (not additive) so tests can point at a local server. Production callers
+   * must never set this — `createModelStore`'s `install` builds its own
+   * `DownloadOptions` and does not forward it, so IPC cannot reach it even
+   * by accident.
    */
   trustedUrlPrefixesForTests?: string[]
 }
@@ -59,13 +59,7 @@ async function partialSize(path: string): Promise<number> {
   }
 }
 
-/**
- * The URL must start with one of the trusted prefixes in full — not just
- * share a hostname — so `https://huggingface.co/attacker/repo/resolve/main/…`
- * is refused exactly like a URL on a different host entirely. Hostname-only
- * checking would let a malicious catalog entry pass this check while still
- * serving arbitrary bytes, which defeats the entire purpose of having it.
- */
+/** Checked in full, not just by hostname — see DEFAULT_TRUSTED_PREFIXES above for why. */
 function assertTrustedSource(url: string, trustedPrefixes: readonly string[]): void {
   if (trustedPrefixes.some((prefix) => url.startsWith(prefix))) return
   throw new AppError(
@@ -141,6 +135,7 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
   }
 
   if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {})
     throw new AppError(
       'DOWNLOAD_NETWORK_ERROR',
       "Couldn't reach the model server.",
@@ -159,17 +154,20 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
 
   if (append) {
     const contentRange = response.headers.get('content-range')
-    const start = contentRange ? Number(/bytes (\d+)-/.exec(contentRange)?.[1]) : undefined
-    if (contentRange && start !== resumeFrom) {
-      // The header doesn't match what we asked for, so we can't trust which
-      // bytes this response actually holds. Discard the partial rather than
-      // risk splicing bytes in at the wrong position — the next attempt
-      // starts clean.
+    const match = contentRange ? /bytes (\d+)-\d+\/(\d+)/.exec(contentRange) : null
+    const start = match ? Number(match[1]) : undefined
+    const total = match ? Number(match[2]) : undefined
+    if (start !== resumeFrom || total !== entry.bytes) {
+      // Missing, mismatched, or claiming a different total than the catalog
+      // trusts — any of these means we can't trust which bytes this response
+      // actually holds. Discard the partial rather than risk splicing bytes
+      // in at the wrong position — the next attempt starts clean.
+      await response.body?.cancel().catch(() => {})
       await rm(partPath, { force: true })
       throw new AppError(
         'DOWNLOAD_NETWORK_ERROR',
         'The model server returned an unexpected byte range.',
-        `requested ${resumeFrom}, got ${contentRange}`,
+        `requested ${resumeFrom}, got ${contentRange ?? '(missing)'}`,
       )
     }
   }
@@ -186,8 +184,17 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
 
   const meter = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
-      hash.update(chunk)
       received += chunk.length
+      // entry.bytes is the trusted quantity; the response stream is not. A
+      // server or intermediary that keeps sending past it would otherwise
+      // write unbounded data to disk after the space precheck already
+      // passed — so this is rejected rather than written through.
+      if (received > entry.bytes) {
+        callback(new Error(`received more bytes than expected (${received} > ${entry.bytes})`))
+        return
+      }
+
+      hash.update(chunk)
 
       const elapsed = Math.max(1, now() - startedAt)
       onProgress?.({

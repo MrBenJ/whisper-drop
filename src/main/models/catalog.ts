@@ -24,12 +24,7 @@ export const MODEL_BASE_ORDER: readonly ModelBaseId[] = [
   'large-v3',
 ]
 
-/**
- * Single source of truth for the trust boundary: every catalog URL is built
- * from this prefix, and the downloader validates full URLs against it (not
- * just the host) so a catalog entry pointing at a different repo on the same
- * host is refused.
- */
+/** Single source of truth for the trust boundary — see download.ts's DEFAULT_TRUSTED_PREFIXES for the full rationale. */
 export const MODEL_URL_PREFIX = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/'
 
 function entry(

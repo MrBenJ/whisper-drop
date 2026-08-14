@@ -22,6 +22,12 @@ export type ServerBehaviour =
   /** Answer a Range request with 206 but echo a Content-Range start that
    * doesn't match what was requested. */
   | { kind: 'bad-range' }
+  /** Answer a Range request with 206 but omit Content-Range entirely. */
+  | { kind: 'no-content-range' }
+  /** Send more bytes than the model's expected size, with an honest
+   * Content-Length covering all of them — models a misbehaving server that
+   * keeps writing past what the catalog trusts as the file's true size. */
+  | { kind: 'overlong'; extraBytes: number }
 
 export type ModelServer = {
   url: string
@@ -79,6 +85,21 @@ export async function startModelServer(
         'content-range': `bytes ${start + 1}-${payload.length - 1}/${payload.length}`,
       })
       res.end(slice)
+      return
+    }
+
+    if (behaviour.kind === 'no-content-range') {
+      const start = Number(/bytes=(\d+)-/.exec(req.headers.range ?? '')?.[1] ?? 0)
+      const slice = payload.subarray(start)
+      res.writeHead(206, { 'content-length': String(slice.length) })
+      res.end(slice)
+      return
+    }
+
+    if (behaviour.kind === 'overlong') {
+      const overlong = Buffer.concat([payload, Buffer.alloc(behaviour.extraBytes, 0xff)])
+      res.writeHead(200, { 'content-length': String(overlong.length) })
+      res.end(overlong)
       return
     }
 
