@@ -61,6 +61,10 @@ vi.mock('electron', () => ({
     whenReady: () => Promise.resolve(),
     getPath: (name: string) => (name === 'temp' ? tempDir : userDataDir),
     getLocale: () => 'en-US',
+    // No `ELECTRON_RENDERER_URL` is set in the test process, so `rendererUrl`
+    // is always undefined here regardless of this flag — see window.test.ts
+    // for the P1 packaged/dev-URL gate itself.
+    isPackaged: false,
     on: (event: string, cb: (...args: unknown[]) => void) => {
       const list = appListeners.get(event) ?? []
       list.push(cb)

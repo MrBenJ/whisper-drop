@@ -53,6 +53,13 @@ const progress = (received: number): DownloadProgress => ({
   bytesPerSecond: 1_000_000,
 })
 
+const progressFor = (id: ModelId, received: number): DownloadProgress => ({
+  id,
+  receivedBytes: received,
+  totalBytes: 147_951_465,
+  bytesPerSecond: 1_000_000,
+})
+
 describe('models.list', () => {
   it('returns one row per picker row, in capability order', async () => {
     const { handlers } = harness()
@@ -175,6 +182,45 @@ describe('models.download', () => {
     })
 
     await expect(handlers.download('base')).rejects.toThrow('nope')
+  })
+
+  it('starts a genuinely new download for the newly-resolved id when englishOnly toggles mid-download, and progress lands on the right row (P2 regression)', async () => {
+    let englishOnly = true
+    const { handlers, installs } = harness({
+      readSettings: async () => ({ ...SETTINGS, englishOnly }),
+    })
+
+    // Start downloading the 'base' row while English-only is on — that
+    // resolves to 'base.en'.
+    void handlers.download('base')
+    await Promise.resolve()
+    expect(installs).toHaveLength(1)
+    expect(installs[0]?.id).toBe('base.en')
+    installs[0]?.onProgress(progressFor('base.en', 500))
+
+    // Toggle to all-languages, then click Download on the now-uninstalled
+    // 'base' row again, while the base.en download is still in flight.
+    englishOnly = false
+    void handlers.download('base')
+    await Promise.resolve()
+
+    // The second click must actually start base.bin — not silently rejoin
+    // the still-running (and now-irrelevant) base.en download.
+    expect(installs).toHaveLength(2)
+    expect(installs[1]?.id).toBe('base')
+
+    // The base row must not show base.en's progress.
+    const rows = await handlers.list()
+    const baseRow = rows.find((row) => row.base === 'base')
+    expect(baseRow?.resolved.id).toBe('base')
+    expect(baseRow?.downloading).toBeUndefined()
+
+    // Once base.bin reports progress, it lands on the base row — and only
+    // there.
+    installs[1]?.onProgress(progressFor('base', 200))
+    const rowsAfter = await handlers.list()
+    expect(rowsAfter.find((row) => row.base === 'base')?.downloading?.receivedBytes).toBe(200)
+    expect(rowsAfter.find((row) => row.base === 'tiny')?.downloading).toBeUndefined()
   })
 
   it('allows a retry after a failure', async () => {

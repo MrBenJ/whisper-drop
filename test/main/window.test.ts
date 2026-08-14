@@ -51,15 +51,28 @@ beforeEach(() => {
   vi.resetModules()
 })
 
-async function build() {
+async function build(overrides: { rendererUrl?: string; isPackaged?: boolean } = {}) {
   const { createMainWindow } = await import('../../src/main/window.js')
   createMainWindow({
     preloadPath: '/out/preload/index.cjs',
     rendererFile: '/out/renderer/index.html',
+    isPackaged: false,
+    ...overrides,
   })
   const win = FakeBrowserWindow.instances[0]
   if (!win) throw new Error('createMainWindow did not construct a BrowserWindow')
   return win
+}
+
+async function buildThrows(overrides: { rendererUrl?: string; isPackaged?: boolean }) {
+  const { createMainWindow } = await import('../../src/main/window.js')
+  return () =>
+    createMainWindow({
+      preloadPath: '/out/preload/index.cjs',
+      rendererFile: '/out/renderer/index.html',
+      isPackaged: false,
+      ...overrides,
+    })
 }
 
 describe('createMainWindow', () => {
@@ -140,5 +153,50 @@ describe('createMainWindow', () => {
       ...args: unknown[]
     ) => boolean
     expect(handler({}, 'media', 'app://whisper-drop')).toBe(false)
+  })
+})
+
+/**
+ * P1: `rendererUrl` (sourced from `ELECTRON_RENDERER_URL`) reaches `loadURL`
+ * on the same window that exposes the full `window.whisperDrop` bridge.
+ * Nothing about the hardened `webPreferences` above stops a malicious or
+ * misconfigured `rendererUrl` from handing that bridge to remote code — this
+ * is the separate gate that does.
+ */
+describe('rendererUrl gate (P1)', () => {
+  it('refuses rendererUrl entirely in a packaged build, even a loopback one', async () => {
+    const throws = await buildThrows({ rendererUrl: 'http://localhost:5173', isPackaged: true })
+
+    expect(throws).toThrow(/localhost:5173/)
+    expect(throws).toThrow(/packaged/)
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+  })
+
+  it('loads the built file in a packaged build when no rendererUrl is set', async () => {
+    const win = await build({ isPackaged: true })
+
+    expect(win.loadFile).toHaveBeenCalledExactlyOnceWith('/out/renderer/index.html')
+    expect(win.loadURL).not.toHaveBeenCalled()
+  })
+
+  it('refuses a non-loopback origin in development', async () => {
+    const throws = await buildThrows({ rendererUrl: 'https://example.com', isPackaged: false })
+
+    expect(throws).toThrow(/example\.com/)
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+  })
+
+  it('refuses a LAN host in development', async () => {
+    const throws = await buildThrows({ rendererUrl: 'http://192.168.1.5:5173', isPackaged: false })
+
+    expect(throws).toThrow(/192\.168\.1\.5/)
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+  })
+
+  it('accepts http://localhost:5173 in development and loads it', async () => {
+    const win = await build({ rendererUrl: 'http://localhost:5173', isPackaged: false })
+
+    expect(win.loadURL).toHaveBeenCalledExactlyOnceWith('http://localhost:5173')
+    expect(win.loadFile).not.toHaveBeenCalled()
   })
 })

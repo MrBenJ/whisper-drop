@@ -28,9 +28,21 @@ type Pending = {
 }
 
 export function createModelHandlers(deps: ModelsDeps): ModelHandlers {
-  // Keyed by picker row, not by concrete id: the row is what the user clicked,
-  // and it is what Cancel and the progress bar are attached to.
-  const pending = new Map<ModelBaseId, Pending>()
+  // Keyed by the *resolved* ModelId ('base' vs 'base.en'), not by the picker
+  // row. The English-only toggle can flip which concrete id a row resolves
+  // to while a download for the old id is still in flight; a row-keyed map
+  // would then either wrongly join that stale download or (worse) silently
+  // drop a click that should have started a fresh one for the newly-resolved
+  // id. See the toggle-mid-download regression test in models.test.ts.
+  const pending = new Map<ModelId, Pending>()
+  // A short-lived, row-keyed lock covering only the gap between admitting a
+  // download() call and registering it into `pending` under its resolved id.
+  // Resolving that id requires reading settings, which is async, so two
+  // clicks on the same row issued back to back (no await between them) would
+  // otherwise both pass the empty `pending` check before either had
+  // registered. Released the moment the resolved id is known — `pending`
+  // itself is what dedupes for the rest of the download's lifetime.
+  const admitting = new Map<ModelBaseId, Promise<void>>()
 
   async function list(): Promise<ModelRow[]> {
     const settings = await deps.readSettings()
@@ -38,56 +50,79 @@ export function createModelHandlers(deps: ModelsDeps): ModelHandlers {
     return Promise.all(
       MODEL_BASE_ORDER.map(async (base): Promise<ModelRow> => {
         const resolved = entryFor(resolveModelId(base, settings.englishOnly))
+        const latest = pending.get(resolved.id)?.latest
         return {
           base,
           resolved,
           installed: await deps.isInstalled(resolved.id),
           realtimeFactor: settings.throughput[resolved.id]?.realtimeFactor,
-          downloading: pending.get(base)?.latest,
+          // `pending` is already keyed by `resolved.id`, so `latest.id` can
+          // only ever equal it — this is a belt-and-suspenders check that a
+          // row can never surface another row's in-flight progress.
+          downloading: latest?.id === resolved.id ? latest : undefined,
         }
       }),
     )
   }
 
   // `async` so a validation failure arrives as a rejection like every other
-  // handler's. The body still registers into `pending` before its first await,
-  // which is what makes the double-click guard below race-free.
+  // handler's. `admitting.set` below runs before the first await, which is
+  // what makes the synchronous double-click guard race-free — the same
+  // guarantee the old row-keyed `pending.set` used to provide directly.
   async function download(base: unknown): Promise<void> {
     const row = requireModelBaseId(base)
 
-    const existing = pending.get(row)
-    if (existing) return existing.promise
+    const admittingRow = admitting.get(row)
+    if (admittingRow) return admittingRow
 
-    const controller = new AbortController()
-    const record: Pending = { controller, promise: Promise.resolve() }
-    // Registered before the first await, so a double-clicked button joins this
-    // download rather than starting a second one with its own controller.
-    pending.set(row, record)
-
-    record.promise = (async () => {
+    const request = (async () => {
       try {
         const settings = await deps.readSettings()
-        await deps.install(resolveModelId(row, settings.englishOnly), {
-          signal: controller.signal,
-          onProgress: (progress) => {
-            record.latest = progress
-            deps.emitProgress(progress)
-          },
-        })
-      } catch (cause) {
-        // Cancellation is not an error. Part 2 rejects with a plain Error on
-        // abort and keeps the `.part` file, so Retry resumes.
-        if (!controller.signal.aborted) throw cause
+        const id = resolveModelId(row, settings.englishOnly)
+
+        const existing = pending.get(id)
+        if (existing) return existing.promise
+
+        const controller = new AbortController()
+        const record: Pending = { controller, promise: Promise.resolve() }
+        pending.set(id, record)
+
+        record.promise = (async () => {
+          try {
+            await deps.install(id, {
+              signal: controller.signal,
+              onProgress: (progress) => {
+                record.latest = progress
+                deps.emitProgress(progress)
+              },
+            })
+          } catch (cause) {
+            // Cancellation is not an error. Part 2 rejects with a plain Error on
+            // abort and keeps the `.part` file, so Retry resumes.
+            if (!controller.signal.aborted) throw cause
+          } finally {
+            pending.delete(id)
+          }
+        })()
+
+        return record.promise
       } finally {
-        pending.delete(row)
+        // Only the admission gap is locked — not the whole download — so a
+        // later click on this row (e.g. after a toggle) re-resolves the id
+        // and joins or starts fresh under `pending`, rather than being stuck
+        // behind a download that can take minutes.
+        admitting.delete(row)
       }
     })()
 
-    return record.promise
+    admitting.set(row, request)
+    return request
   }
 
   async function cancelDownload(base: unknown): Promise<void> {
-    pending.get(requireModelBaseId(base))?.controller.abort()
+    const row = requireModelBaseId(base)
+    const settings = await deps.readSettings()
+    pending.get(resolveModelId(row, settings.englishOnly))?.controller.abort()
   }
 
   async function remove(base: unknown): Promise<void> {

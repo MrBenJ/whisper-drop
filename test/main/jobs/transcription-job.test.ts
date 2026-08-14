@@ -283,7 +283,25 @@ describe('TranscriptionJob', () => {
 
     const run = job.start()
     job.cancel()
-    await run
+
+    // A bare `await run` here hangs to Vitest's blanket 5000ms test timeout
+    // if cancel() regresses — a correct gate, but a flat 5s tax on every CI
+    // run and a message that doesn't say what actually failed. Race against
+    // a short, explicit deadline instead, with a message that names the real
+    // failure. `controller.abort()` fires its listeners synchronously, so
+    // 200ms is generous margin, not a tight bound.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('cancel() did not abort the probe signal within 200ms')),
+        200,
+      )
+    })
+    try {
+      await Promise.race([run, deadline])
+    } finally {
+      clearTimeout(timer)
+    }
 
     expect(capturedSignal?.aborted).toBe(true)
     expect(job.state.phase).toBe('cancelled')

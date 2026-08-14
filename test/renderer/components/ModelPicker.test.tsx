@@ -330,30 +330,22 @@ describe('ModelPicker', () => {
     expect(h.onClose).toHaveBeenCalledOnce()
   })
 
-  // M8: this note must survive even when `resolved.id` doesn't literally
-  // equal `base` — the old `row.resolved.id === row.base &&` clause would
-  // have suppressed it here, which is exactly the case where the user most
-  // needs the explanation (main resolved this row to something unexpected).
-  it('still shows the partial-swap note even if the resolved id does not equal the base id', () => {
-    const rows: ModelRow[] = [
-      modelRow({
-        base: 'large-v3',
-        resolved: {
-          id: 'large-v3', // would differ from `base` under a genuine mis-resolution
-          base: 'large-v3',
-          label: 'Large v3',
-          bytes: 1,
-          sha256: 'x',
-          url: 'x',
-          blurb: 'x',
-          englishOnly: false,
-        },
-      }),
-    ]
-    renderPicker(rows, handlers(), { settings: { ...DEFAULT_SETTINGS, englishOnly: true } })
-
-    expect(document.querySelectorAll('.model-row-note')).toHaveLength(1)
-  })
+  // M8 regression test removed here (was: 'still shows the partial-swap note
+  // even if the resolved id does not equal the base id'). It constructed
+  // `resolved.id: 'large-v3'` equal to `base: 'large-v3'` despite an inline
+  // comment claiming otherwise, so restoring the deleted
+  // `row.resolved.id === row.base &&` clause left it passing unchanged — it
+  // proved nothing about the fix it claimed to guard. It also cannot be
+  // rewritten into a genuine mismatch: `ModelId` only offers a `.en`
+  // alternate for `tiny`/`base`/`small`, and `resolveModelId` always returns
+  // `base` itself for `large-v3`/`large-v3-turbo` (the only
+  // `NO_PARTIAL_SWAP_BASES` members), so `resolved.id === base` is a real
+  // invariant for every row this note can appear on — no legitimately typed
+  // `ModelRow` can produce the mismatch this test wanted to exercise. The
+  // dead-clause removal in `ModelPicker.tsx` itself is still correct and
+  // low-risk; M7's `labelsOf()` assertions above already cover the note's
+  // actual rendering logic (`englishOnly && NO_PARTIAL_SWAP_BASES.has(row.base)`,
+  // which never referenced `resolved.id` in the first place).
 
   // M13: aria-modal="true" alone doesn't stop Tab from reaching the header
   // behind the scrim — this proves the trap that keeps it inside the dialog.

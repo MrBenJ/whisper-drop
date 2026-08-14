@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { _electron as electron, type ElectronApplication, type Page } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { whisperCliPath } from '../../src/main/binaries.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const FIXTURE = join(ROOT, 'test/fixtures/hello.mp4')
@@ -17,6 +18,16 @@ let page: Page
 beforeAll(async () => {
   expect(existsSync(join(ROOT, 'out/main/index.js')), 'run `npm run build` first').toBe(true)
   expect(existsSync(TINY_MODEL), 'run `node scripts/fetch-test-model.mjs` first').toBe(true)
+  // `npm run setup` compiles whisper.cpp via cmake, which can take minutes —
+  // deliberately not triggered automatically from here (that would turn a
+  // clear, fast failure into an opaque, silent multi-minute wait, the same
+  // class of problem this check exists to catch). Checked before Electron
+  // ever launches, so a fresh checkout fails in milliseconds with an
+  // actionable message instead of the app going quiet for ~5 minutes with
+  // NO_MODEL_INSTALLED/timeout as the only eventual symptom.
+  expect(existsSync(whisperCliPath()), 'whisper-cli not found — run `npm run setup` first').toBe(
+    true,
+  )
 
   // A throwaway user-data directory, pre-seeded so the app starts past first
   // run. `--user-data-dir` is a Chromium switch Electron honours, which is why

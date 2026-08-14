@@ -102,6 +102,7 @@ async function setup(): Promise<void> {
       preloadPath: join(import.meta.dirname, '../preload/index.cjs'),
       rendererUrl: process.env.ELECTRON_RENDERER_URL,
       rendererFile: join(import.meta.dirname, '../renderer/index.html'),
+      isPackaged: app.isPackaged,
     })
 
   window = openWindow()
