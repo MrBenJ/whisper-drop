@@ -1,0 +1,16 @@
+whisper_init_from_file_with_params_no_state: loading model from 'models/ggml-tiny.bin'
+whisper_model_load: loading model
+whisper_model_load: n_vocab       = 51865
+whisper_model_load: model ctx     =   73.62 MB
+whisper_init_state: kv self size  =    5.25 MB
+
+system_info: n_threads = 4 / 10 | AVX = 0 | METAL = 1 |
+
+main: processing 'audio.wav' (48000 samples, 3.0 sec), 4 threads, 1 processors, lang = en, task = transcribe, timestamps = 1
+
+[00:00:00.000 --> 00:00:02.000]   Testing one two
+[00:00:02.000 --> 00:00:03.000]   three four.
+[00:00:03.000 --> 00:00:04.000]
+
+whisper_print_timings:     load time =   120.00 ms
+whisper_print_timings:    total time =   980.00 ms
