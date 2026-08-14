@@ -36,7 +36,7 @@ function coerceActiveModel(value: unknown): ModelBaseId | null {
 }
 
 function isThroughputEntry(value: unknown): value is { realtimeFactor: number; samples: number } {
-  return isPlainObject(value) && typeof value.realtimeFactor === 'number' && typeof value.samples === 'number'
+  return isPlainObject(value) && Number.isFinite(value.realtimeFactor) && Number.isFinite(value.samples)
 }
 
 function coerceThroughput(value: unknown): Settings['throughput'] {
@@ -91,7 +91,11 @@ export function createSettingsStore(dir: string, locale: string) {
   }
 
   async function write(patch: Partial<Settings>): Promise<Settings> {
-    const merged = { ...(await read()), ...patch, version: CURRENT_VERSION }
+    const current = await read()
+    // Coerce the merged result through the same validation as read(), so a
+    // bad value crossing the IPC boundary (e.g. via an `as` cast) can't reach
+    // disk — and the caller back — unvalidated.
+    const merged = coerceSettings({ ...current, ...patch, version: CURRENT_VERSION }, current)
     await writeFile(tmp, `${JSON.stringify(merged, null, 2)}\n`, 'utf8')
     await rename(tmp, file)
     return merged

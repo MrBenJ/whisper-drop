@@ -64,9 +64,15 @@ describe('createSettingsStore', () => {
     expect((await createSettingsStore(dir, 'en-US').read()).englishOnly).toBe(false)
   })
 
-  it('leaves no .tmp file behind, so writes are atomic', async () => {
+  it('writes through a temp file and renames it into place', async () => {
+    // Pre-seed a stale .tmp with junk. temp-then-rename overwrites it and
+    // renames it away; a direct writeFile(file, ...) would leave it sitting
+    // there untouched, so this distinguishes the two without fs mocking.
+    await writeFile(join(dir, 'settings.json.tmp'), 'junk', 'utf8')
     const store = createSettingsStore(dir, 'en-US')
     await store.write({ activeModel: 'base' })
+
+    expect((await store.read()).activeModel).toBe('base')
     expect((await readdir(dir)).filter((f) => f.endsWith('.tmp'))).toEqual([])
   })
 
@@ -118,6 +124,25 @@ describe('reading malformed but structurally-valid JSON', () => {
       JSON.stringify({
         version: 1,
         throughput: { base: { realtimeFactor: 12, samples: 3 }, tiny: 'bad', small: { realtimeFactor: 'x' } },
+      }),
+      'utf8',
+    )
+    const settings = await createSettingsStore(dir, 'en-US').read()
+    expect(settings.throughput).toEqual({ base: { realtimeFactor: 12, samples: 3 } })
+  })
+
+  it('drops throughput entries with a non-finite realtimeFactor or samples', async () => {
+    // NaN isn't representable in JSON; JSON.stringify(NaN) serialises it as
+    // null, which is exactly the shape a corrupted file would produce, so
+    // write it directly rather than round-tripping through JSON.stringify.
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        throughput: {
+          base: { realtimeFactor: 12, samples: 3 },
+          tiny: { realtimeFactor: null, samples: 1 },
+        },
       }),
       'utf8',
     )
