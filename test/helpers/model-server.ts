@@ -97,9 +97,15 @@ export async function startModelServer(
     }
 
     if (behaviour.kind === 'overlong') {
-      const overlong = Buffer.concat([payload, Buffer.alloc(behaviour.extraBytes, 0xff)])
-      res.writeHead(200, { 'content-length': String(overlong.length) })
-      res.end(overlong)
+      // Written as two separate flushes, like 'truncate' and 'slow' below, so
+      // the client reliably observes the expected-size payload and the
+      // overflow as distinct chunks rather than one coalesced buffer — that's
+      // what lets a test assert the cap truncates at exactly the expected
+      // size rather than rejecting (and dropping) the whole thing.
+      const overflow = Buffer.alloc(behaviour.extraBytes, 0xff)
+      res.writeHead(200, { 'content-length': String(payload.length + overflow.length) })
+      res.write(payload)
+      setTimeout(() => res.end(overflow), 20)
       return
     }
 

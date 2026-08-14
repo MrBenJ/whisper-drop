@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, stat, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rename, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -75,6 +75,30 @@ describe('createModelStore', () => {
     await expect(createModelStore(dir).remove('large-v3')).resolves.toBeUndefined()
   })
 
+  describe('the id trust boundary', () => {
+    // id crosses the IPC boundary in part 3 as a renderer-supplied string, so
+    // it can't be trusted to be a real ModelId. pathFor is the one place
+    // every on-disk path is built, so validating there closes remove's
+    // arbitrary-file-delete and verify's arbitrary-file-read in one place.
+    const traversalId = '../../../../../../etc/some' as ModelId
+
+    it('pathFor rejects a path-traversal id', () => {
+      expect(() => createModelStore(dir).pathFor(traversalId)).toThrow()
+    })
+
+    it('pathFor rejects an id that is not a real catalog id', () => {
+      expect(() => createModelStore(dir).pathFor('not-a-real-model' as ModelId)).toThrow()
+    })
+
+    it('remove rejects a path-traversal id rather than deleting an arbitrary path', async () => {
+      await expect(createModelStore(dir).remove(traversalId)).rejects.toThrow()
+    })
+
+    it('remove rejects an id that is not a real catalog id', async () => {
+      await expect(createModelStore(dir).remove('not-a-real-model' as ModelId)).rejects.toThrow()
+    })
+  })
+
   it('removes both the final file and a leftover .part, so cancelling then removing reclaims the space', async () => {
     const store = createModelStore(dir)
     await mkdir(join(dir, 'models'), { recursive: true })
@@ -142,6 +166,63 @@ describe('createModelStore', () => {
     await store.install('tiny', { force: true })
 
     expect(download).toHaveBeenCalledTimes(1)
+  })
+
+  describe('concurrent install and remove', () => {
+    it('serializes concurrent installs for the same id, downloading only once', async () => {
+      const download = vi.fn(async () => {})
+      const store = createModelStore(dir, download)
+
+      await Promise.all([store.install('tiny'), store.install('tiny')])
+
+      expect(download).toHaveBeenCalledTimes(1)
+    })
+
+    it('lets a later install proceed independently once an earlier one has finished', async () => {
+      const download = vi.fn(async () => {})
+      const store = createModelStore(dir, download)
+
+      await store.install('tiny')
+      await store.install('tiny', { force: true })
+
+      expect(download).toHaveBeenCalledTimes(2)
+    })
+
+    it('waits for an in-flight install before removing, so remove never races the final rename and never surfaces a raw fs error', async () => {
+      // A fake downloader that writes a .part file and then, once released,
+      // renames it into place — modelling the real downloadModel's shape
+      // closely enough to exercise the race the old code had: remove()
+      // unlinking mid-download and the eventual rename failing with a raw,
+      // uncoded fs error.
+      let downloaderReady: () => void = () => {}
+      const downloaderIsWaiting = new Promise<void>((resolve) => {
+        downloaderReady = resolve
+      })
+      let releaseDownloader: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        releaseDownloader = resolve
+      })
+
+      const store = createModelStore(dir, async ({ destPath }) => {
+        await mkdir(join(dir, 'models'), { recursive: true })
+        await writeFile(`${destPath}.part`, 'partial')
+        downloaderReady()
+        await gate
+        await rename(`${destPath}.part`, destPath)
+      })
+
+      const installPromise = store.install('tiny')
+      await downloaderIsWaiting
+
+      const removePromise = store.remove('tiny')
+      releaseDownloader()
+
+      await expect(installPromise).resolves.toBeUndefined()
+      await expect(removePromise).resolves.toBeUndefined()
+
+      expect(await store.isInstalled('tiny')).toBe(false)
+      await expect(stat(store.pathFor('tiny'))).rejects.toThrow()
+    })
   })
 
   describe('verify', () => {

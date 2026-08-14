@@ -59,13 +59,48 @@ async function partialSize(path: string): Promise<number> {
   }
 }
 
-/** Checked in full, not just by hostname — see DEFAULT_TRUSTED_PREFIXES above for why. */
+/** `77691713` → `"74.1 MB"`; `3095033483` → `"2.9 GB"`. MB below a gigabyte,
+ * GB above, one decimal place — `Math.ceil(bytes / 1e9)` rounded a 77 MB
+ * model up to "about 1 GB", which is not a sensible size for it. */
+function formatBytes(bytes: number): string {
+  const GB = 1024 * 1024 * 1024
+  const MB = 1024 * 1024
+  return bytes >= GB ? `${(bytes / GB).toFixed(1)} GB` : `${(bytes / MB).toFixed(1)} MB`
+}
+
+/** Path of the temporary file a download writes to before the final rename
+ * into place. Exported so the store can compute the same path without
+ * re-deriving the suffix independently — see store.ts's `remove`. */
+export function partPathFor(destPath: string): string {
+  return `${destPath}.part`
+}
+
+/**
+ * Checked in full, not just by hostname — see DEFAULT_TRUSTED_PREFIXES above
+ * for why. Compared against the *normalized* URL, not the raw string: `fetch`
+ * resolves `..` segments before requesting, so a raw `startsWith` check would
+ * let `<trusted-prefix>../../../attacker/repo/...` pass the string check
+ * while actually fetching from `attacker/repo` — exactly the malicious-
+ * catalog-entry threat this check exists to stop. A URL that fails to parse
+ * is rejected, not passed through.
+ */
 function assertTrustedSource(url: string, trustedPrefixes: readonly string[]): void {
-  if (trustedPrefixes.some((prefix) => url.startsWith(prefix))) return
+  let normalized: string
+  try {
+    normalized = new URL(url).href
+  } catch (cause) {
+    throw new AppError(
+      'DOWNLOAD_NETWORK_ERROR',
+      'Refused to download from an untrusted source.',
+      `url=${url} unparsable: ${String(cause)}`,
+    )
+  }
+
+  if (trustedPrefixes.some((prefix) => normalized.startsWith(prefix))) return
   throw new AppError(
     'DOWNLOAD_NETWORK_ERROR',
     'Refused to download from an untrusted source.',
-    `url=${url} trustedPrefixes=${trustedPrefixes.join(', ')}`,
+    `url=${normalized} trustedPrefixes=${trustedPrefixes.join(', ')}`,
   )
 }
 
@@ -84,7 +119,7 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
   if (signal?.aborted) throw new Error('downloadModel: aborted before starting')
   assertTrustedSource(entry.url, trustedUrlPrefixesForTests ?? DEFAULT_TRUSTED_PREFIXES)
 
-  const partPath = `${destPath}.part`
+  const partPath = partPathFor(destPath)
 
   let resumeFrom = await partialSize(partPath)
   if (resumeFrom > entry.bytes) {
@@ -114,7 +149,7 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
   if (free < entry.bytes - resumeFrom + HEADROOM_BYTES) {
     throw new AppError(
       'INSUFFICIENT_DISK_SPACE',
-      `Not enough free space. ${entry.label} needs about ${Math.ceil(entry.bytes / 1e9)} GB.`,
+      `Not enough free space. ${entry.label} needs about ${formatBytes(entry.bytes)}.`,
       `free=${free} required=${entry.bytes - resumeFrom + HEADROOM_BYTES}`,
     )
   }
@@ -245,5 +280,18 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     )
   }
 
-  await rename(partPath, destPath)
+  try {
+    await rename(partPath, destPath)
+  } catch (cause) {
+    // Most likely: the .part file was deleted out from under this download
+    // (e.g. a concurrent remove that isn't serialized against this install —
+    // the store's install/remove serialization is meant to prevent that, but
+    // this is the last line of defense) rather than a raw fs error with no
+    // code a caller can show the user.
+    throw new AppError(
+      'MODEL_FILE_MISSING',
+      `${entry.label} finished downloading, but the file went missing before it could be installed.`,
+      String(cause),
+    )
+  }
 }

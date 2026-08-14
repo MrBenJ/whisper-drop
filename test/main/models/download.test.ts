@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -293,15 +293,34 @@ describe('downloadModel', () => {
   })
 
   it('caps bytes written when the server sends more than entry.bytes, so a disk-filling stream cannot fill the disk', async () => {
-    server = await startModelServer(BODY, { kind: 'overlong', extraBytes: 1024 })
+    // Old assertion (size <= BODY.length) passed under both a real cap and a
+    // no-op cap, since an uncapped download reaches the checksum branch,
+    // which deletes .part on mismatch — so 0 <= BODY.length passed too, and
+    // only the error code discriminated, incidentally. extraBytes an order
+    // of magnitude past the body, plus an exact-size assertion, proves the
+    // cap actually truncated the stream rather than the file being deleted.
+    server = await startModelServer(BODY, { kind: 'overlong', extraBytes: BODY.length * 10 })
     const dest = join(dir, 'model.bin')
 
     await expect(
       download({ entry: entryFor(server.url), destPath: dest }),
     ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
 
-    const size = await stat(`${dest}.part`).then((s) => s.size, () => 0)
-    expect(size).toBeLessThanOrEqual(BODY.length)
+    expect((await stat(`${dest}.part`)).size).toBe(BODY.length)
+  })
+
+  it('wraps a failed final rename as MODEL_FILE_MISSING rather than a raw fs error', async () => {
+    // Simulates the destination having gone missing/unusable out from under
+    // a completing download (e.g. an unserialized concurrent remove) — a
+    // real fs error with no project error code, which would otherwise reach
+    // a non-technical user as raw "ENOENT: ... rename ..." text.
+    server = await startModelServer(BODY)
+    const dest = join(dir, 'model.bin')
+    await mkdir(dest) // destPath already exists as a directory, so rename(partFile, dest) fails
+
+    await expect(
+      download({ entry: entryFor(server.url), destPath: dest }),
+    ).rejects.toMatchObject({ code: 'MODEL_FILE_MISSING' })
   })
 
   describe('aborting mid-stream', () => {
@@ -423,6 +442,44 @@ describe('downloadModel', () => {
       await expect(
         downloadModel({
           entry: entryFor('https://huggingface.co/attacker/repo/resolve/main/ggml-tiny.bin'),
+          destPath: join(dir, 'model.bin'),
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+
+    it('rejects a path-traversal URL that string-startsWith the trusted prefix but resolves outside it, before any fetch', async () => {
+      // fetch() normalizes '..' segments before requesting; a raw
+      // url.startsWith(prefix) check does not, so this string passes a naive
+      // check while actually requesting attacker/repo. The server's own
+      // request list (not just the fetchImpl mock) proves nothing was ever
+      // requested, including no request to the resolved attacker URL.
+      const fetchImpl = vi.fn()
+      const traversalUrl =
+        'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/' +
+        '../../../../attacker/repo/resolve/main/ggml-tiny.bin'
+      expect(traversalUrl.startsWith('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/')).toBe(true)
+      expect(new URL(traversalUrl).href).toBe('https://huggingface.co/attacker/repo/resolve/main/ggml-tiny.bin')
+
+      await expect(
+        downloadModel({
+          entry: entryFor(traversalUrl),
+          destPath: join(dir, 'model.bin'),
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+
+    it('rejects a URL that fails to parse, rather than passing it through', async () => {
+      const fetchImpl = vi.fn()
+
+      await expect(
+        downloadModel({
+          entry: entryFor('not a url at all'),
           destPath: join(dir, 'model.bin'),
           fetchImpl,
         }),

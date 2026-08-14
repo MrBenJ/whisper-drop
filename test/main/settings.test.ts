@@ -97,6 +97,38 @@ describe('createSettingsStore', () => {
     )
     expect((await createSettingsStore(dir, 'en-US').read()).activeModel).toBeNull()
   })
+
+  it('preserves a file with an unrecognised future version as settings.corrupt.json, rather than letting the next write silently destroy it', async () => {
+    const futureFile = JSON.stringify({ version: 99, activeModel: 'large-v3' })
+    await writeFile(join(dir, 'settings.json'), futureFile, 'utf8')
+
+    await createSettingsStore(dir, 'en-US').read()
+
+    expect(await readFile(join(dir, 'settings.corrupt.json'), 'utf8')).toBe(futureFile)
+  })
+
+  it('applies two concurrent writes in order rather than losing one to a clobbered shared temp file', async () => {
+    const store = createSettingsStore(dir, 'en-US')
+
+    await Promise.all([
+      store.write({ activeModel: 'small' }),
+      store.recordThroughput('tiny', 20),
+    ])
+
+    const settings = await store.read()
+    expect(settings.activeModel).toBe('small')
+    expect(settings.throughput.tiny).toEqual({ realtimeFactor: 20, samples: 1 })
+  })
+
+  it('applies two concurrent recordThroughput calls for different models without either clobbering the other', async () => {
+    const store = createSettingsStore(dir, 'en-US')
+
+    await Promise.all([store.recordThroughput('base', 10), store.recordThroughput('tiny', 40)])
+
+    const settings = await store.read()
+    expect(settings.throughput.base).toEqual({ realtimeFactor: 10, samples: 1 })
+    expect(settings.throughput.tiny).toEqual({ realtimeFactor: 40, samples: 1 })
+  })
 })
 
 describe('reading malformed but structurally-valid JSON', () => {

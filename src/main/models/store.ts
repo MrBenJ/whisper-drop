@@ -4,7 +4,7 @@ import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
 import { CATALOG, entryFor, type ModelEntry, type ModelId } from './catalog.js'
-import { downloadModel, type DownloadOptions, type DownloadProgress } from './download.js'
+import { downloadModel, partPathFor, type DownloadOptions, type DownloadProgress } from './download.js'
 
 export type InstallOptions = {
   onProgress?: (progress: DownloadProgress) => void
@@ -30,7 +30,24 @@ export function createModelStore(
 ) {
   const modelsDir = join(dir, 'models')
 
+  // One in-flight install promise per model id. Lets a second install() for
+  // the same id join the first instead of starting a second download (which
+  // would double-write the same .part and double the disk-fill cap), and
+  // lets remove() wait for an install to finish before deleting anything —
+  // rather than unlinking the file out from under a download still writing
+  // to it, which used to surface as a raw fs error on the eventual rename.
+  const inFlightInstalls = new Map<ModelId, Promise<void>>()
+
+  /**
+   * `id` crosses the IPC boundary in part 3 as a renderer-supplied string, so
+   * it cannot be trusted to already be a real ModelId. `lookup` throws on
+   * anything that isn't a real catalog id — including a path-traversal
+   * string like '../../../../etc/passwd', which would otherwise let `remove`
+   * delete an arbitrary file. Validating here, in the one place every path
+   * is built, closes that for `remove` and for `verify`'s file read too.
+   */
   function pathFor(id: ModelId): string {
+    lookup(id)
     return join(modelsDir, `${id}.bin`)
   }
 
@@ -71,22 +88,38 @@ export function createModelStore(
   }
 
   /** Deletes the model file and any leftover `.part`, so cancelling a
-   * download and then removing it actually reclaims the space. */
+   * download and then removing it actually reclaims the space. Waits out any
+   * in-flight install for this id first, so a remove landing mid-download
+   * can't unlink the file a download is still writing to. */
   async function remove(id: ModelId): Promise<void> {
-    await rm(pathFor(id), { force: true })
-    await rm(`${pathFor(id)}.part`, { force: true })
+    const path = pathFor(id) // validates id before anything else runs
+    await inFlightInstalls.get(id)?.catch(() => {})
+    await rm(path, { force: true })
+    await rm(partPathFor(path), { force: true })
   }
 
   async function install(id: ModelId, options: InstallOptions = {}): Promise<void> {
-    if (!options.force && (await isInstalled(id))) return
+    const existing = inFlightInstalls.get(id)
+    if (existing) return existing
 
-    await mkdir(modelsDir, { recursive: true })
-    await download({
-      entry: lookup(id),
-      destPath: pathFor(id),
-      onProgress: options.onProgress,
-      signal: options.signal,
-    })
+    const promise = (async () => {
+      if (!options.force && (await isInstalled(id))) return
+
+      await mkdir(modelsDir, { recursive: true })
+      await download({
+        entry: lookup(id),
+        destPath: pathFor(id),
+        onProgress: options.onProgress,
+        signal: options.signal,
+      })
+    })()
+
+    inFlightInstalls.set(id, promise)
+    try {
+      await promise
+    } finally {
+      inFlightInstalls.delete(id)
+    }
   }
 
   return { modelsDir, pathFor, isInstalled, verify, listInstalled, remove, install }
