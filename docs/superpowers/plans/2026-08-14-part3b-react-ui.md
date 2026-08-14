@@ -1,4 +1,4 @@
-# whisper-drop Part 3 — Electron App, IPC and UI — Implementation Plan
+# whisper-drop Part 3b — React UI — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
