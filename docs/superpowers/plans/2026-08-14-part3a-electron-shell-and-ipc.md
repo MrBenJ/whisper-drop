@@ -2,34 +2,51 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Put a window in front of parts 1 and 2. An Electron shell with a hardened renderer, a narrow typed IPC surface that validates everything crossing it, and a React UI with five states — drop a file, watch honest progress, read the transcript, save it next to the source.
+**Goal:** The Electron shell underneath parts 1 and 2 — a hardened window, a narrow typed IPC
+surface that validates everything crossing it, and the composition root that wires the real
+collaborators together. No UI in this plan: it ends with `window.whisperDrop` callable from
+devtools against a placeholder page. The React UI is 3b.
 
 **Architecture:** Four electron-importing files and nothing else. `src/main/index.ts` is the composition root: it is the only place that reads `app.getPath('userData')` and the only place that knows the real `probe`/`extract`/`runWhisper` collaborators exist. Every IPC handler module takes its dependencies by injection and knows nothing about Electron, so the whole boundary — id validation, the one-job-at-a-time rule, the reveal allowlist, error translation — is unit-tested without an app harness. The renderer is React with no router, no state library and no CSS framework; its state is one pure reducer, tested as pure data.
 
 **Tech Stack:** TypeScript 5 (ESM), Vitest 4, Node 22, Electron 43, electron-vite 5, Vite 7, React 19, `@vitejs/plugin-react` 5, Testing Library 16 + jsdom for components, `playwright`'s `_electron` for one smoke test.
 
 **Spec:** `docs/superpowers/specs/2026-08-14-part3-electron-app-design.md`
+(This spec doc lands in the same branch as this plan, `part-3-electron-app`; it does not exist on
+`main` until part 3 merges.)
 **Parent spec:** `docs/superpowers/specs/2026-08-13-whisper-drop-design.md` — binding authority.
 
 ## Scope
 
-This is plan 3 of 4. Parts 1 and 2 are merged on `main`: 211 tests, all green, `tsc --noEmit` clean.
+This is plan 3a of 4 (3a and 3b together are "plan 3" — one plan, split into two documents because
+the combined draft exceeded the review tool's size limit). Parts 1 and 2 are merged on `main`: 211
+tests, all green, `tsc --noEmit` clean.
 
-**In scope:** the electron-vite scaffold, the main-process entry and window lifecycle with the spec's security posture, the preload bridge, the shared IPC contract types, five IPC handler modules, the composition root, `before-quit` cleanup, the React UI (drop zone, working, done, error, model picker), export-to-file with the collision rule, and one Playwright-on-Electron smoke test.
+**In scope:** the electron-vite scaffold, the main-process entry and window lifecycle with the
+spec's security posture, the preload bridge, the shared IPC contract types, six IPC handler
+modules, the path trust boundary, the composition root, and `before-quit` cleanup.
+
+**Out of scope, picked up by 3b:** the React UI (drop zone, working, done, error, model picker),
+export-to-file with the collision rule, and the Playwright-on-Electron smoke test.
 
 **Out of scope, deferred to plan 4:** `electron-builder` packaging, code signing, releases, GitHub Actions, the README and the Licenses screen. Also out, per the parent spec's Later list: batch queue, translation, custom vocabulary, word-level timestamps.
 
-**Deliverable:** `npm run dev` opens a working app. `npm test` passes the unit suite in seconds. `npm run test:e2e` launches the built app, transcribes `test/fixtures/hello.mp4`, and asserts the transcript renders.
+**Deliverable:** `npm run dev` opens an Electron window with the full security posture, loading a
+placeholder page. `npm test` passes the unit suite in seconds, including every IPC handler and the
+electron-import boundary guard. `window.whisperDrop` is callable from devtools and every call
+round-trips through main's validation. There is no UI and no e2e test in this plan — see 3b.
 
 ## Deviations from the spec
 
-Three, recorded here so none of them is silent.
+Four, recorded here so none of them is silent.
 
 1. **Four files may import `electron`, not one directory.** The part 3 spec says "`src/main/ipc/` is the only directory permitted to import `electron`" and, two paragraphs later, that `src/main/index.ts` calls `app.getPath('userData')`. Those cannot both hold: `src/main/index.ts` is the Electron entry point and must call `app.whenReady()`. The rule this plan enforces — and enforces with a test, not a convention — is an explicit four-file allowlist: `src/main/index.ts`, `src/main/window.ts`, `src/main/ipc/index.ts`, `src/preload/index.ts`. Every handler module, and everything under `src/main/` that carries logic, stays plain Node. The parent spec's actual wording ("Modules under `src/main/` other than `ipc/` must not import `electron`") is about logic modules, and that intent is preserved exactly.
 
 2. **The shared types the renderer needs move to `src/shared/types.ts`.** The parent spec's "Shared types" section declares `ModelBaseId`, `ModelId`, `ModelEntry`, `DownloadProgress` and `Settings` as shared. Part 2 declared them inside `models/catalog.ts`, `models/download.ts` and `settings.ts` instead, which was correct while nothing else needed them. It is not correct now: the renderer must name them, and the renderer must not import from `src/main/`. Task 2 moves the declarations to `src/shared/types.ts` and re-exports them from their current homes, so every existing import keeps working. **Verified:** this move alone leaves all 211 existing tests green and `tsc --noEmit` clean.
 
 3. **The IPC surface gains `droppedFile.pathFor(file)`.** Neither spec lists it, and without it the drop zone cannot work at all: Electron 32 removed the `File.path` property, and a dropped file's real path is now obtainable only from a preload calling `webUtils.getPathForFile(file)`. This is the one addition to the contract, and it is a getter over an OS-supplied `File`, not a new capability.
+
+4. **A path trust boundary the specs describe as a property, not a mechanism.** The parent spec's "the renderer never constructs a filesystem path" is an intent, but as written `transcribe.start(filePath: string)` would accept any string. This plan makes it a real check: `src/main/ipc/trusted-paths.ts` is a small issue/consume registry held in main. `dialog.openFile` and the preload's `droppedFile.pathFor` are the only two ways a path reaches the renderer, and both issue into it — `pathFor` does so over a new renderer-to-main-only channel, `droppedFileRegister`, fired from inside the preload and never exposed on `WhisperDropApi` itself. `transcribe.start` consumes an entry before acting on a path and rejects anything else with `INVALID_REQUEST`. This is the same allowlist-by-issuance pattern the spec already uses for `shell.reveal`, applied to the one place it was missing.
 
 ## Global Constraints
 
@@ -38,7 +55,7 @@ Every task's requirements implicitly include these.
 - **Only four files may import `electron`:** `src/main/index.ts`, `src/main/window.ts`, `src/main/ipc/index.ts`, `src/preload/index.ts`. Everything else — every handler module, every logic module, the whole renderer — is plain Node or plain browser. This is what keeps the suite running without an app harness. Task 1 adds `test/main/electron-boundary.test.ts`, which fails the build if the allowlist is broken.
 - **Only `src/main/ipc/index.ts` touches `ipcMain`.** Handler modules take dependencies by injection and return plain functions.
 - **`jobId` is generated in main with `randomUUID()`, is a `Map` key, and is never a path component.** Part 1's `tempWavPath(id)` interpolates the id straight into a filesystem path; a renderer-supplied id would be a traversal. Handlers look jobs up in the map and reject an unknown id.
-- **The renderer never constructs a filesystem path.** It reads `JobState.filePath` to show a filename and it passes back opaque ids and format literals. `exportTranscript.save` derives the output path from main's own record of the job. `shell.reveal` accepts only a path main itself previously returned.
+- **A filesystem path only ever reaches `transcribe.start` if main issued it first.** `dialog.openFile` and `droppedFile.pathFor` are the only two ways a path enters the renderer; both record it in a main-held `TrustedPaths` registry (`src/main/ipc/trusted-paths.ts`) before the renderer sees it, and `transcribe.start` consumes — checks and removes — an entry before acting on a path, rejecting anything else with `INVALID_REQUEST`. The renderer otherwise never constructs a path: it reads `JobState.filePath` to show a filename and passes back opaque ids and format literals. `exportTranscript.save` derives the output path from main's own record of the job. `shell.reveal` accepts only a path main itself previously returned, via the same issue-then-check pattern.
 - **No new runtime dependency beyond the spec's list:** `electron`, `electron-vite`, `vite`, `react`, `react-dom`, `@vitejs/plugin-react`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`, `playwright`. No UI component library, no CSS framework, no state-management library, no icon font.
 - **The renderer loads nothing from the network,** at any point, in dev or in production.
 - **`ErrorCode` stays at nine values.** The three boundary conditions this part introduces live in a separate `IpcBoundaryCode` union.
@@ -67,11 +84,13 @@ Every task's requirements implicitly include these.
 | `src/main/ipc/index.ts` | The only `ipcMain.handle` calls |
 | `src/main/ipc/errors.ts` | `IpcError`, `toFailure`, `toResult` |
 | `src/main/ipc/validate.ts` | The three boundary validators |
-| `src/main/ipc/transcribe.ts` | Job map, one-job-at-a-time, throughput recording |
+| `src/main/ipc/trusted-paths.ts` | The issue/consume registry behind the path trust boundary |
+| `src/main/ipc/transcribe.ts` | Job map, one-job-at-a-time, throughput recording, path trust check |
 | `src/main/ipc/models.ts` | Picker rows, download, cancel, remove |
 | `src/main/ipc/settings.ts` | Read, and a whitelisted patch |
 | `src/main/ipc/export.ts` | Save, and the reveal allowlist |
-| `src/main/ipc/dialog.ts` | The browse fallback |
+| `src/main/ipc/dialog.ts` | The browse fallback; issues the chosen path as trusted |
+| `src/main/ipc/dropped-file.ts` | Registers a dropped file's `pathFor` result as trusted |
 | `src/main/export/save.ts` | Next-to-source naming and the ` (2)` collision rule |
 | `src/renderer/index.html` | Document shell. CSP is injected at build time |
 | `src/renderer/main.tsx` | React root |
@@ -95,6 +114,7 @@ electron-vite, React and TypeScript alongside the existing Vitest setup, with th
 - Create: `tsconfig.web.json`, `electron.vite.config.ts`, `vitest.e2e.config.ts`
 - Create: `src/shared/csp.ts`, `src/main/navigation.ts`, `src/main/window.ts`, `src/main/index.ts`
 - Create: `src/renderer/index.html`, `src/renderer/main.tsx`, `src/renderer/App.tsx`, `src/renderer/styles.css`, `src/renderer/env.d.ts`
+- Create: `src/preload/index.ts` (a placeholder; Task 2 replaces its contents with the real bridge)
 - Test: `test/shared/csp.test.ts`, `test/main/navigation.test.ts`, `test/main/electron-boundary.test.ts`
 
 **Interfaces:**
@@ -197,13 +217,25 @@ Create `tsconfig.web.json`:
     "noUncheckedIndexedAccess": true,
     "noEmit": true,
     "skipLibCheck": true,
+    // Not because this program's own code needs Node — the boundary test
+    // below proves it doesn't — but because `src/preload` is in this program
+    // and Electron's own type declarations reference Node ambient types
+    // (`Buffer`, the `NodeJS` namespace) even in the corners of its API
+    // surface this preload never touches. Dropping this makes `tsc -p
+    // tsconfig.web.json` fail on `import ... from 'electron'` itself.
     "types": ["node"]
   },
   "include": ["src/renderer", "src/preload", "src/shared", "test/renderer"]
 }
 ```
 
-`src/shared` is in both programs deliberately: it must compile under DOM-free Node rules *and* Node-free browser rules, which is the cheapest possible proof that nothing platform-specific leaks into it. There are no project references and no `composite`, so nothing objects to the overlap.
+`src/shared` is in both programs deliberately: it must compile under DOM-free Node rules *and*
+Node-free browser rules, which is the cheapest possible proof that nothing platform-specific leaks
+into it. There are no project references and no `composite`, so nothing objects to the overlap.
+`"types": ["node"]` above is why that proof is a typecheck plus a test rather than a typecheck
+alone — see the boundary guard in Step 15, which greps `src/shared` and `src/renderer` for actual
+Node builtin imports and Node globals, the thing the ambient ability to resolve `Buffer` cannot by
+itself rule out.
 
 - [ ] **Step 4: Update the Vitest configs**
 
@@ -393,7 +425,22 @@ export default defineConfig({
 
 `externalizeDepsPlugin()` on the main build is load-bearing: `ffmpeg-static` and `ffprobe-static` resolve their binaries from their own `__dirname` and break if bundled.
 
-- [ ] **Step 9: Create the placeholder renderer**
+- [ ] **Step 9: Create a minimal no-op preload**
+
+Step 8's `electron.vite.config.ts` already points the preload build at `src/preload/index.ts`,
+and Step 13 below writes a `src/main/index.ts` that expects the built `../preload/index.cjs` to
+exist. Without this file the scaffold cannot build. Task 2 replaces the contents below with the
+real `contextBridge` surface; this version exists only so the window-and-security work in the rest
+of this task is verifiable — `npm run dev` and `npm run build` both need a preload that compiles.
+
+`src/preload/index.ts`:
+
+```ts
+// Placeholder. Task 2 replaces this with the real contextBridge bridge.
+export {}
+```
+
+- [ ] **Step 10: Create the placeholder renderer**
 
 `src/renderer/index.html` — note there is no CSP meta tag here; step 8 injects it.
 
@@ -450,7 +497,7 @@ export function App() {
 /// <reference types="vite/client" />
 ```
 
-- [ ] **Step 10: Write the failing test for the navigation predicate**
+- [ ] **Step 11: Write the failing test for the navigation predicate**
 
 Create `test/main/navigation.test.ts`:
 
@@ -482,7 +529,7 @@ describe('isAllowedNavigation', () => {
 
 Run: `npx vitest run test/main/navigation.test.ts` — expected FAIL, cannot resolve `navigation.js`.
 
-- [ ] **Step 11: Implement `src/main/navigation.ts`**
+- [ ] **Step 12: Implement `src/main/navigation.ts`**
 
 ```ts
 /**
@@ -498,7 +545,7 @@ export function isAllowedNavigation(currentUrl: string, targetUrl: string): bool
 
 Run: `npx vitest run test/main/navigation.test.ts` — expected PASS.
 
-- [ ] **Step 12: Create `src/main/window.ts`**
+- [ ] **Step 13: Create `src/main/window.ts`**
 
 ```ts
 import { BrowserWindow } from 'electron'
@@ -554,7 +601,7 @@ export function createMainWindow(options: WindowOptions): BrowserWindow {
 }
 ```
 
-- [ ] **Step 13: Create a minimal `src/main/index.ts`**
+- [ ] **Step 14: Create a minimal `src/main/index.ts`**
 
 Task 3 replaces this with the full composition root. For now it only has to open a window.
 
@@ -585,11 +632,18 @@ app.on('window-all-closed', () => {
 
 `import.meta.dirname` needs Node 20.11+; Electron 43 ships Node 22. electron-vite emits main as ESM and leaves `import.meta.dirname` intact — verified in the built output.
 
-Until Task 2 exists there is no `src/preload/index.cjs`, so Electron logs a preload-not-found warning and the window still opens. That is expected at this step.
+Step 9's placeholder preload means `../preload/index.cjs` already exists at this point, so the
+window opens with no preload-not-found warning even though `window.whisperDrop` is not yet defined
+— that arrives in Task 2.
 
-- [ ] **Step 14: Write the boundary guard**
+- [ ] **Step 15: Write the boundary guard**
 
 Create `test/main/electron-boundary.test.ts`. Task 3 adds one more assertion to this file.
+
+`src/shared` compiles under both tsconfigs — the Node program and the web program — specifically so
+it cannot depend on either platform. Checking imports alone would miss `process.platform` or
+`Buffer.from` reached through an ambient global rather than an import, so this checks both, and
+checks `src/shared` as well as `src/renderer` for exactly that reason.
 
 ```ts
 import { readFile, readdir } from 'node:fs/promises'
@@ -612,6 +666,10 @@ const MAY_IMPORT_ELECTRON = new Set([
 
 const ELECTRON_IMPORT = /(?:from|import|require)\s*\(?\s*['"]electron['"]/
 const NODE_BUILTIN_IMPORT = /(?:from|import|require)\s*\(?\s*['"]node:/
+// `global` is deliberately excluded: it is common in ordinary prose/comments
+// and TypeScript's own `globalThis` typings, and every real Node escape hatch
+// this is meant to catch already goes through one of the other four names.
+const NODE_GLOBAL = /\b(?:process|require|__dirname|__filename|Buffer)\b/
 
 async function sourceFiles(dir: string): Promise<string[]> {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -628,6 +686,22 @@ async function sourceFiles(dir: string): Promise<string[]> {
 
 const FILES = await sourceFiles(SRC)
 const key = (file: string): string => relative(SRC, file).split(sep).join('/')
+
+/** Shared between the renderer and shared-code checks below — same rule, two directories. */
+function checksNodeFreedom(dirPrefix: string) {
+  return async (): Promise<void> => {
+    const offenders: string[] = []
+
+    for (const file of FILES.filter((f) => key(f).startsWith(dirPrefix))) {
+      const contents = await readFile(file, 'utf8')
+      if (NODE_BUILTIN_IMPORT.test(contents) || NODE_GLOBAL.test(contents)) {
+        offenders.push(key(file))
+      }
+    }
+
+    expect(offenders).toEqual([])
+  }
+}
 
 describe('the Electron boundary', () => {
   it('finds source files to check, so a broken walk cannot pass silently', () => {
@@ -646,15 +720,12 @@ describe('the Electron boundary', () => {
     expect(offenders).toEqual([])
   })
 
-  it('keeps node builtins out of the renderer', async () => {
-    const offenders: string[] = []
+  it('keeps node builtins and node globals out of the renderer', checksNodeFreedom('renderer/'))
 
-    for (const file of FILES.filter((f) => key(f).startsWith('renderer/'))) {
-      if (NODE_BUILTIN_IMPORT.test(await readFile(file, 'utf8'))) offenders.push(key(file))
-    }
-
-    expect(offenders).toEqual([])
-  })
+  // The renderer typechecks under tsconfig.web.json alongside src/shared, so
+  // shared code that quietly depended on Node would still pass tsc — only
+  // this test catches it.
+  it('keeps node builtins and node globals out of shared code', checksNodeFreedom('shared/'))
 
   it('keeps main out of the renderer, so the renderer cannot reach the filesystem', async () => {
     const offenders: string[] = []
@@ -668,7 +739,7 @@ describe('the Electron boundary', () => {
 })
 ```
 
-- [ ] **Step 15: Prove the existing suite is untouched and still fast**
+- [ ] **Step 16: Prove the existing suite is untouched and still fast**
 
 Run: `npm test`
 Expected: PASS. The 211 pre-existing tests plus the new csp, navigation and boundary tests. Duration under 10 seconds — if it is not, something has pulled jsdom or a browser environment into the node suite.
@@ -676,7 +747,7 @@ Expected: PASS. The 211 pre-existing tests plus the new csp, navigation and boun
 Run: `npm run typecheck`
 Expected: both programs clean, no output.
 
-- [ ] **Step 16: Prove the build works**
+- [ ] **Step 17: Prove the build works**
 
 Run: `npm run build`
 Expected: three builds succeed —
@@ -704,12 +775,12 @@ grep -oE 'from "[a-z@][^"]*"' out/main/index.js | sort -u
 
 Expected: `electron`, `ffmpeg-static`, `ffprobe-static` and `node:*` only — nothing from `src/`.
 
-- [ ] **Step 17: Open the window**
+- [ ] **Step 18: Open the window**
 
 Run: `npm run dev`
 Expected: an Electron window titled `whisper-drop` showing the placeholder heading. Close it to end the run.
 
-- [ ] **Step 18: Commit**
+- [ ] **Step 19: Commit**
 
 ```bash
 git add package.json package-lock.json .gitignore tsconfig.json tsconfig.web.json \
@@ -725,13 +796,14 @@ The typed surface both sides compile against, so main and renderer cannot drift.
 
 **Files:**
 - Modify: `src/shared/types.ts`, `src/main/models/catalog.ts`, `src/main/models/download.ts`, `src/main/settings.ts`, `src/main/export/formatters.ts`, `src/renderer/env.d.ts`
-- Create: `src/shared/ipc.ts`, `src/preload/index.ts`
+- Modify: `src/preload/index.ts` (Task 1's placeholder, replaced here with the real bridge)
+- Create: `src/shared/ipc.ts`
 
 **Interfaces:**
 - Consumes: `ErrorCode`, `JobState`, `Unsubscribe` from `src/shared/types.ts`.
 - Produces:
   - `ERROR_CODES`, `EXPORT_FORMATS`, and the moved `ModelBaseId` / `ModelId` / `ModelEntry` / `DownloadProgress` / `Settings` / `ExportFormat`
-  - `CHANNELS`, `Channel`, `IpcBoundaryCode`, `IpcErrorCode`, `IPC_BOUNDARY_CODES`, `IpcFailure`, `IpcResult<T>`, `ModelRow`, `WhisperDropApi`
+  - `CHANNELS` (including `droppedFileRegister`, used only inside the preload — see Deviation 4 below), `Channel`, `IpcBoundaryCode`, `IpcErrorCode`, `IPC_BOUNDARY_CODES`, `IpcFailure`, `IpcResult<T>`, `ModelRow`, `WhisperDropApi`
   - `window.whisperDrop`
 
 - [ ] **Step 1: Move the shared types into `src/shared/types.ts`**
@@ -849,6 +921,13 @@ export const CHANNELS = {
   exportSave: 'export:save',
   dialogOpenFile: 'dialog:openFile',
   shellReveal: 'shell:reveal',
+  /**
+   * Renderer -> main only, fired from inside the preload's `pathFor`. Not on
+   * `WhisperDropApi` — it isn't a capability the renderer calls deliberately,
+   * it's how main learns a path it must trust for `transcribe.start`. See
+   * `src/main/ipc/trusted-paths.ts`.
+   */
+  droppedFileRegister: 'droppedFile:register',
 } as const
 
 export type Channel = (typeof CHANNELS)[keyof typeof CHANNELS]
@@ -923,14 +1002,18 @@ export type WhisperDropApi = {
   droppedFile: {
     /**
      * Electron 32 removed `File.path`. A dropped file's real path is only
-     * obtainable from the preload, via `webUtils.getPathForFile`.
+     * obtainable from the preload, via `webUtils.getPathForFile`. The preload
+     * also reports the path to main over `droppedFileRegister` so
+     * `transcribe.start` can trust it — see `src/main/ipc/trusted-paths.ts`.
      */
     pathFor(file: File): string
   }
 }
 ```
 
-- [ ] **Step 5: Create `src/preload/index.ts`**
+- [ ] **Step 5: Replace `src/preload/index.ts` with the real bridge**
+
+This replaces Task 1 Step 9's placeholder outright.
 
 ```ts
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
@@ -981,14 +1064,25 @@ const api: WhisperDropApi = {
     reveal: (path) => invoke<void>(CHANNELS.shellReveal, path),
   },
   droppedFile: {
-    pathFor: (file) => webUtils.getPathForFile(file),
+    pathFor: (file) => {
+      const path = webUtils.getPathForFile(file)
+      // Fire-and-forget, and safe to not await: ipcRenderer.invoke preserves
+      // send order over its one channel, and the main-side register handler
+      // does no awaiting of its own, so it is fully handled before the next
+      // message — the transcribe:start this path is about to be used for —
+      // is even dispatched. An empty path (the synthetic-File case the e2e
+      // test's comment describes) is not registered; transcribe.start would
+      // reject an empty path before it ever checks trust anyway.
+      if (path) void ipcRenderer.invoke(CHANNELS.droppedFileRegister, path).catch(() => {})
+      return path
+    },
   },
 }
 
 contextBridge.exposeInMainWorld('whisperDrop', api)
 ```
 
-Three things here are not optional. The preload imports no Node builtin, because a sandboxed preload has no `require` for them. `webUtils` is available in a sandboxed preload and is the only place `getPathForFile` can be called. And the unsubscribe function returned by `subscribe` crosses the bridge as a proxied function, which contextBridge supports in both directions.
+Four things here are not optional. The preload imports no Node builtin, because a sandboxed preload has no `require` for them. `webUtils` is available in a sandboxed preload and is the only place `getPathForFile` can be called. The unsubscribe function returned by `subscribe` crosses the bridge as a proxied function, which contextBridge supports in both directions. And `pathFor` stays synchronous — the drop zone needs the path immediately, not a Promise — while still getting the path registered as trusted before `transcribe.start` for it can possibly be sent, because Electron's IPC transport is FIFO per renderer and the register handler never awaits.
 
 - [ ] **Step 6: Declare the global in `src/renderer/env.d.ts`**
 
@@ -1027,15 +1121,17 @@ git commit -m "feat: shared IPC contract types and the preload bridge"
 The security-critical task. Every handler module takes its dependencies by injection, so all of it is unit-tested without launching Electron; `src/main/ipc/index.ts` is the only file that calls `ipcMain.handle`, and `src/main/index.ts` is the only file that reads `app.getPath('userData')`.
 
 **Files:**
-- Create: `src/main/ipc/errors.ts`, `src/main/ipc/validate.ts`, `src/main/ipc/transcribe.ts`, `src/main/ipc/models.ts`, `src/main/ipc/settings.ts`, `src/main/ipc/export.ts`, `src/main/ipc/dialog.ts`, `src/main/ipc/index.ts`
+- Create: `src/main/ipc/errors.ts`, `src/main/ipc/validate.ts`, `src/main/ipc/trusted-paths.ts`, `src/main/ipc/transcribe.ts`, `src/main/ipc/models.ts`, `src/main/ipc/settings.ts`, `src/main/ipc/export.ts`, `src/main/ipc/dialog.ts`, `src/main/ipc/dropped-file.ts`, `src/main/ipc/index.ts`
 - Create: `src/main/export/save.ts`
 - Replace: `src/main/index.ts`
 - Modify: `test/main/electron-boundary.test.ts`
-- Test: `test/main/ipc/errors.test.ts`, `test/main/ipc/transcribe.test.ts`, `test/main/ipc/models.test.ts`, `test/main/ipc/settings.test.ts`, `test/main/ipc/export.test.ts`, `test/main/ipc/dialog.test.ts`, `test/main/export/save.test.ts`
+- Test: `test/main/ipc/errors.test.ts`, `test/main/ipc/trusted-paths.test.ts`, `test/main/ipc/transcribe.test.ts`, `test/main/ipc/models.test.ts`, `test/main/ipc/settings.test.ts`, `test/main/ipc/export.test.ts`, `test/main/ipc/dialog.test.ts`, `test/main/ipc/dropped-file.test.ts`, `test/main/export/save.test.ts`
+- Test: `test/main/ipc/path-trust.test.ts` (the trust boundary wired end to end, across real dialog/dropped-file/transcribe handlers)
+- Test: `test/main/ipc/wiring.test.ts` (proves every channel `registerIpcHandlers` registers is exactly the set the preload bridge invokes)
 
 **Interfaces:**
 - Consumes: `TranscriptionJob` + `JobInput` (`main/jobs/transcription-job.ts`); `probe`, `extractWav`, `runWhisper`; `createModelStore`, `createSettingsStore`; `resolveModelId`, `entryFor`, `MODEL_BASE_ORDER`; `format`; `AppError`; everything from Task 2.
-- Produces: `IpcError`, `toFailure`, `toResult`; `requireNonEmptyString`, `requireModelBaseId`, `requireExportFormat`; `createTranscribeHandlers`, `createModelHandlers`, `createSettingsHandlers`, `createExportHandlers`, `createDialogHandlers`; `registerIpcHandlers`; `candidatePath`, `saveTranscript`.
+- Produces: `IpcError`, `toFailure`, `toResult`; `requireNonEmptyString`, `requireModelBaseId`, `requireExportFormat`; `createTrustedPaths`; `createTranscribeHandlers`, `createModelHandlers`, `createSettingsHandlers`, `createExportHandlers`, `createDialogHandlers`, `createDroppedFileHandlers`; `registerIpcHandlers`; `candidatePath`, `saveTranscript`.
 
 - [ ] **Step 1: Write the failing tests for the error envelope**
 
@@ -1218,7 +1314,99 @@ export function requireExportFormat(value: unknown): ExportFormat {
 }
 ```
 
-- [ ] **Step 4: Write the failing tests for the transcribe handlers**
+- [ ] **Step 4: Write the failing tests for the trusted-paths registry**
+
+Create `test/main/ipc/trusted-paths.test.ts`:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { createTrustedPaths } from '../../../src/main/ipc/trusted-paths.js'
+
+describe('createTrustedPaths', () => {
+  it('consumes a path it issued', () => {
+    const paths = createTrustedPaths()
+    paths.issue('/videos/a.mp4')
+
+    expect(paths.consume('/videos/a.mp4')).toBe(true)
+  })
+
+  it('refuses a path it never issued', () => {
+    const paths = createTrustedPaths()
+
+    expect(paths.consume('/etc/passwd')).toBe(false)
+  })
+
+  it('cannot be consumed twice', () => {
+    const paths = createTrustedPaths()
+    paths.issue('/videos/a.mp4')
+    paths.consume('/videos/a.mp4')
+
+    expect(paths.consume('/videos/a.mp4')).toBe(false)
+  })
+
+  it('tracks each issued path independently', () => {
+    const paths = createTrustedPaths()
+    paths.issue('/a.mp4')
+    paths.issue('/b.mp4')
+
+    expect(paths.consume('/a.mp4')).toBe(true)
+    expect(paths.consume('/b.mp4')).toBe(true)
+  })
+
+  it('does not grow without bound when paths are issued and never consumed', () => {
+    const paths = createTrustedPaths()
+    for (let i = 0; i < 1_000; i++) paths.issue(`/videos/${i}.mp4`)
+
+    // The oldest entries were evicted; the most recent one is still trusted.
+    expect(paths.consume('/videos/999.mp4')).toBe(true)
+    expect(paths.consume('/videos/0.mp4')).toBe(false)
+  })
+})
+```
+
+Run: `npx vitest run test/main/ipc/trusted-paths.test.ts` — expected FAIL.
+
+- [ ] **Step 5: Implement `src/main/ipc/trusted-paths.ts`**
+
+```ts
+/**
+ * A filesystem path reaches the renderer in exactly two ways: the open
+ * dialog (`dialog.openFile`) and a dropped file resolved via
+ * `webUtils.getPathForFile` in the preload (`droppedFile.pathFor`). Both are
+ * issued here before the renderer ever sees them. `transcribe.start` consumes
+ * an entry before it will act on a path, so a compromised renderer cannot ask
+ * main to transcribe a file the user never actually chose.
+ */
+export type TrustedPaths = {
+  issue(path: string): void
+  /** True and removes the entry; false leaves nothing behind to retry. */
+  consume(path: string): boolean
+}
+
+/** Bounds memory if paths are issued and the job that would consume them never starts. */
+const MAX_ISSUED = 500
+
+export function createTrustedPaths(): TrustedPaths {
+  const issued = new Set<string>()
+
+  return {
+    issue(path) {
+      if (issued.size >= MAX_ISSUED) {
+        const oldest = issued.values().next().value
+        if (oldest !== undefined) issued.delete(oldest)
+      }
+      issued.add(path)
+    },
+    consume(path) {
+      return issued.delete(path)
+    },
+  }
+}
+```
+
+Run: `npx vitest run test/main/ipc/trusted-paths.test.ts` — expected PASS, 5 tests.
+
+- [ ] **Step 6: Write the failing tests for the transcribe handlers**
 
 Create `test/main/ipc/transcribe.test.ts`:
 
@@ -1290,6 +1478,9 @@ function harness(overrides: Partial<Parameters<typeof createTranscribeHandlers>[
     },
     recordThroughput,
     emitState: (state) => states.push(state),
+    // Every existing test drops a file "already selected through whisper-drop";
+    // the trust-boundary tests below override this explicitly.
+    consumeTrustedPath: () => true,
     ...overrides,
   })
 
@@ -1324,6 +1515,22 @@ describe('transcribe.start', () => {
     await expect(handlers.start(42)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     await expect(handlers.start('')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     await expect(handlers.start(null)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('rejects a path main never issued', async () => {
+    const { handlers, created } = harness({ consumeTrustedPath: () => false })
+
+    await expect(handlers.start('/etc/passwd')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(created).toHaveLength(0)
+  })
+
+  it('accepts a path main issued, and consumes it exactly once', async () => {
+    const consumeTrustedPath = vi.fn((path: string) => path === '/videos/interview.mp4')
+    const { handlers, created } = harness({ consumeTrustedPath })
+    await handlers.start('/videos/interview.mp4')
+
+    expect(created).toHaveLength(1)
+    expect(consumeTrustedPath).toHaveBeenCalledWith('/videos/interview.mp4')
   })
 
   it('resolves the model against the English-only toggle', async () => {
@@ -1539,7 +1746,7 @@ describe('transcribe.cancelActive', () => {
 
 Run: `npx vitest run test/main/ipc/transcribe.test.ts` — expected FAIL.
 
-- [ ] **Step 5: Implement `src/main/ipc/transcribe.ts`**
+- [ ] **Step 7: Implement `src/main/ipc/transcribe.ts`**
 
 ```ts
 import { AppError } from '../../shared/errors.js'
@@ -1566,6 +1773,12 @@ export type TranscribeDeps = {
   createJob: (input: JobInput) => JobLike
   recordThroughput: (id: ModelId, realtimeFactor: number) => Promise<unknown>
   emitState: (state: JobState) => void
+  /**
+   * True and consumes the entry if `filePath` is one main itself issued, via
+   * `dialog.openFile` or a dropped file's `pathFor`. The renderer cannot name
+   * a path main did not first hand it — this is what enforces that.
+   */
+  consumeTrustedPath: (filePath: string) => boolean
 }
 
 export type TranscribeHandlers = {
@@ -1593,6 +1806,16 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
 
   async function start(filePath: unknown): Promise<string> {
     const path = requireNonEmptyString(filePath, 'filePath')
+
+    // Boundary check first, before the busy check: a forged path is rejected
+    // the same way whether or not a job happens to be running.
+    if (!deps.consumeTrustedPath(path)) {
+      throw new IpcError(
+        'INVALID_REQUEST',
+        'That file was not selected through whisper-drop.',
+        `filePath=${JSON.stringify(path.slice(0, 200))}`,
+      )
+    }
 
     if (starting || activeId !== null) {
       throw new IpcError(
@@ -1675,9 +1898,9 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
 }
 ```
 
-Run: `npx vitest run test/main/ipc/transcribe.test.ts` — expected PASS, 24 tests.
+Run: `npx vitest run test/main/ipc/transcribe.test.ts` — expected PASS, 29 tests.
 
-- [ ] **Step 6: Write the failing tests for the model handlers**
+- [ ] **Step 8: Write the failing tests for the model handlers**
 
 Create `test/main/ipc/models.test.ts`:
 
@@ -1940,7 +2163,7 @@ describe('models.remove', () => {
 })
 ```
 
-- [ ] **Step 7: Implement `src/main/ipc/models.ts`**
+- [ ] **Step 9: Implement `src/main/ipc/models.ts`**
 
 ```ts
 import type { ModelRow } from '../../shared/ipc.js'
@@ -2051,7 +2274,7 @@ Note on `download` being `async`: an earlier draft made it a plain function so t
 
 Note on `remove`: it deliberately does not clear `activeModel`. Removing the active model leaves `transcribe.start` refusing with `MODEL_FILE_MISSING`, whose UI action is "download it again" — which is a better outcome than silently deselecting.
 
-- [ ] **Step 8: Write the failing tests for the settings handlers**
+- [ ] **Step 10: Write the failing tests for the settings handlers**
 
 Create `test/main/ipc/settings.test.ts`:
 
@@ -2186,7 +2409,7 @@ describe('settings.set', () => {
 })
 ```
 
-- [ ] **Step 9: Implement `src/main/ipc/settings.ts`**
+- [ ] **Step 11: Implement `src/main/ipc/settings.ts`**
 
 ```ts
 import type { ModelBaseId, Settings } from '../../shared/types.js'
@@ -2258,7 +2481,7 @@ export function createSettingsHandlers(deps: SettingsDeps): SettingsHandlers {
 
 Run: `npx vitest run test/main/ipc/settings.test.ts` — expected PASS, 13 tests.
 
-- [ ] **Step 10: Write the failing tests for `save.ts`**
+- [ ] **Step 12: Write the failing tests for `save.ts`**
 
 Create `test/main/export/save.test.ts`:
 
@@ -2385,7 +2608,7 @@ describe('saveTranscript', () => {
 })
 ```
 
-- [ ] **Step 11: Implement `src/main/export/save.ts`**
+- [ ] **Step 13: Implement `src/main/export/save.ts`**
 
 ```ts
 import { writeFile } from 'node:fs/promises'
@@ -2441,7 +2664,7 @@ export async function saveTranscript(options: SaveOptions): Promise<string> {
 
 Run: `npx vitest run test/main/export/save.test.ts` — expected PASS, 13 tests.
 
-- [ ] **Step 12: Write the failing tests for the export and dialog handlers**
+- [ ] **Step 14: Write the failing tests for the export, dialog, and dropped-file handlers**
 
 Create `test/main/ipc/export.test.ts`:
 
@@ -2613,45 +2836,82 @@ describe('shell.reveal', () => {
 Create `test/main/ipc/dialog.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createDialogHandlers } from '../../../src/main/ipc/dialog.js'
+
+function harness(showOpenDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>) {
+  const issuePath = vi.fn()
+  const handlers = createDialogHandlers({ showOpenDialog, issuePath })
+  return { handlers, issuePath }
+}
 
 describe('dialog.openFile', () => {
   it('returns the chosen path', async () => {
-    const handlers = createDialogHandlers({
-      showOpenDialog: async () => ({ canceled: false, filePaths: ['/videos/a.mp4'] }),
-    })
+    const { handlers } = harness(async () => ({ canceled: false, filePaths: ['/videos/a.mp4'] }))
 
     expect(await handlers.openFile()).toBe('/videos/a.mp4')
   })
 
-  it('returns null when the user cancels', async () => {
-    const handlers = createDialogHandlers({
-      showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-    })
+  it('issues the chosen path as trusted, so transcribe.start will accept it', async () => {
+    const { handlers, issuePath } = harness(async () => ({
+      canceled: false,
+      filePaths: ['/videos/a.mp4'],
+    }))
+    await handlers.openFile()
+
+    expect(issuePath).toHaveBeenCalledWith('/videos/a.mp4')
+  })
+
+  it('returns null when the user cancels, and issues nothing', async () => {
+    const { handlers, issuePath } = harness(async () => ({ canceled: true, filePaths: [] }))
 
     expect(await handlers.openFile()).toBeNull()
+    expect(issuePath).not.toHaveBeenCalled()
   })
 
   it('returns null when the dialog reports success with no path', async () => {
-    const handlers = createDialogHandlers({
-      showOpenDialog: async () => ({ canceled: false, filePaths: [] }),
-    })
+    const { handlers, issuePath } = harness(async () => ({ canceled: false, filePaths: [] }))
 
     expect(await handlers.openFile()).toBeNull()
+    expect(issuePath).not.toHaveBeenCalled()
   })
 
   it('takes the first path when several come back', async () => {
-    const handlers = createDialogHandlers({
-      showOpenDialog: async () => ({ canceled: false, filePaths: ['/a.mp4', '/b.mp4'] }),
-    })
+    const { handlers } = harness(async () => ({ canceled: false, filePaths: ['/a.mp4', '/b.mp4'] }))
 
     expect(await handlers.openFile()).toBe('/a.mp4')
   })
 })
 ```
 
-- [ ] **Step 13: Implement `src/main/ipc/export.ts` and `src/main/ipc/dialog.ts`**
+Create `test/main/ipc/dropped-file.test.ts`:
+
+```ts
+import { describe, expect, it, vi } from 'vitest'
+import { createDroppedFileHandlers } from '../../../src/main/ipc/dropped-file.js'
+
+describe('droppedFile.register', () => {
+  it('issues the reported path as trusted', async () => {
+    const issuePath = vi.fn()
+    const handlers = createDroppedFileHandlers({ issuePath })
+    await handlers.register('/videos/interview.mp4')
+
+    expect(issuePath).toHaveBeenCalledWith('/videos/interview.mp4')
+  })
+
+  it('rejects a non-string or empty path rather than issuing it', async () => {
+    const issuePath = vi.fn()
+    const handlers = createDroppedFileHandlers({ issuePath })
+
+    await expect(handlers.register(42)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(handlers.register('')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(handlers.register(null)).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(issuePath).not.toHaveBeenCalled()
+  })
+})
+```
+
+- [ ] **Step 15: Implement `src/main/ipc/export.ts`, `src/main/ipc/dialog.ts`, and `src/main/ipc/dropped-file.ts`**
 
 `src/main/ipc/export.ts`:
 
@@ -2741,6 +3001,8 @@ export function createExportHandlers(deps: ExportDeps): ExportHandlers {
 ```ts
 export type DialogDeps = {
   showOpenDialog: () => Promise<{ canceled: boolean; filePaths: string[] }>
+  /** Records the chosen path as trusted, so `transcribe.start` will accept it. */
+  issuePath: (path: string) => void
 }
 
 export type DialogHandlers = {
@@ -2749,27 +3011,63 @@ export type DialogHandlers = {
 
 /**
  * No extension filter: file validity is ffprobe's answer, not a list of
- * extensions. The dialog is the click-to-browse fallback for the drop zone.
+ * extensions. The dialog is the click-to-browse fallback for the drop zone,
+ * and one of the two ways a path enters the renderer — see `trusted-paths.ts`.
  */
 export function createDialogHandlers(deps: DialogDeps): DialogHandlers {
   return {
     async openFile(): Promise<string | null> {
       const result = await deps.showOpenDialog()
       if (result.canceled) return null
-      return result.filePaths[0] ?? null
+
+      const path = result.filePaths[0] ?? null
+      if (path !== null) deps.issuePath(path)
+      return path
     },
   }
 }
 ```
 
-Run: `npx vitest run test/main/ipc` — expected PASS, 73 tests across five files.
+`src/main/ipc/dropped-file.ts`:
 
-- [ ] **Step 14: Implement `src/main/ipc/index.ts`**
+```ts
+import { requireNonEmptyString } from './validate.js'
+
+export type DroppedFileDeps = {
+  /** Records the path as trusted, so `transcribe.start` will accept it. */
+  issuePath: (path: string) => void
+}
+
+export type DroppedFileHandlers = {
+  register(path: unknown): Promise<void>
+}
+
+/**
+ * The preload resolves a dropped `File`'s real path via
+ * `webUtils.getPathForFile` and reports it here, so `transcribe.start` can
+ * trust it later. This is the second of the two ways a path enters the
+ * renderer — `dialog.openFile` is the first. Neither spec lists this channel:
+ * it exists purely to close the trust boundary, not as a capability the
+ * renderer calls deliberately.
+ */
+export function createDroppedFileHandlers(deps: DroppedFileDeps): DroppedFileHandlers {
+  return {
+    async register(path: unknown): Promise<void> {
+      deps.issuePath(requireNonEmptyString(path, 'path'))
+    },
+  }
+}
+```
+
+Run: `npx vitest run test/main/ipc` — expected PASS, 96 tests across eight files.
+
+- [ ] **Step 16: Implement `src/main/ipc/index.ts`**
 
 ```ts
 import { ipcMain } from 'electron'
 import { CHANNELS, type Channel } from '../../shared/ipc.js'
 import type { DialogHandlers } from './dialog.js'
+import type { DroppedFileHandlers } from './dropped-file.js'
 import { toResult } from './errors.js'
 import type { ExportHandlers } from './export.js'
 import type { ModelHandlers } from './models.js'
@@ -2782,6 +3080,7 @@ export type AppHandlers = {
   settings: SettingsHandlers
   export: ExportHandlers
   dialog: DialogHandlers
+  droppedFile: DroppedFileHandlers
 }
 
 /**
@@ -2807,10 +3106,12 @@ export function registerIpcHandlers(handlers: AppHandlers): void {
   handle(CHANNELS.exportSave, (jobId, format) => handlers.export.save(jobId, format))
   handle(CHANNELS.dialogOpenFile, () => handlers.dialog.openFile())
   handle(CHANNELS.shellReveal, (path) => handlers.export.reveal(path))
+
+  handle(CHANNELS.droppedFileRegister, (path) => handlers.droppedFile.register(path))
 }
 ```
 
-- [ ] **Step 15: Replace `src/main/index.ts` with the composition root**
+- [ ] **Step 17: Replace `src/main/index.ts` with the composition root**
 
 The collaborator wiring is the same shape part 1's integration test already uses; reuse it rather than inventing a second one.
 
@@ -2821,12 +3122,14 @@ import { join } from 'node:path'
 import { BrowserWindow, app, dialog, shell } from 'electron'
 import { CHANNELS } from '../shared/ipc.js'
 import { saveTranscript } from './export/save.js'
-import { registerIpcHandlers } from './ipc/index.js'
 import { createDialogHandlers } from './ipc/dialog.js'
+import { createDroppedFileHandlers } from './ipc/dropped-file.js'
 import { createExportHandlers } from './ipc/export.js'
+import { registerIpcHandlers } from './ipc/index.js'
 import { createModelHandlers } from './ipc/models.js'
 import { createSettingsHandlers } from './ipc/settings.js'
 import { createTranscribeHandlers, type TranscribeHandlers } from './ipc/transcribe.js'
+import { createTrustedPaths } from './ipc/trusted-paths.js'
 import { TranscriptionJob } from './jobs/transcription-job.js'
 import { extractWav } from './media/extract.js'
 import { probe } from './media/probe.js'
@@ -2851,6 +3154,11 @@ function bootstrap(): void {
     const userData = app.getPath('userData')
     const models = createModelStore(userData)
     const settings = createSettingsStore(userData, app.getLocale())
+    // The only two ways a path enters the renderer — the open dialog and a
+    // dropped file's `pathFor` — issue into this registry. `transcribe.start`
+    // consumes from it, so a path the renderer never received from main is
+    // never trusted, regardless of how it is shaped.
+    const trustedPaths = createTrustedPaths()
 
     let window: BrowserWindow | null = null
     const send = (channel: string, payload: unknown): void => {
@@ -2864,6 +3172,7 @@ function bootstrap(): void {
       isInstalled: (id) => models.isInstalled(id),
       recordThroughput: (id, realtimeFactor) => settings.recordThroughput(id, realtimeFactor),
       emitState: (state) => send(CHANNELS.transcribeState, state),
+      consumeTrustedPath: (path) => trustedPaths.consume(path),
       createJob: (input) =>
         new TranscriptionJob(
           {
@@ -2904,6 +3213,10 @@ function bootstrap(): void {
             : await dialog.showOpenDialog({ properties: ['openFile'] })
           return { canceled: result.canceled, filePaths: result.filePaths }
         },
+        issuePath: (path) => trustedPaths.issue(path),
+      }),
+      droppedFile: createDroppedFileHandlers({
+        issuePath: (path) => trustedPaths.issue(path),
       }),
     })
 
@@ -2937,7 +3250,7 @@ function bootstrap(): void {
 bootstrap()
 ```
 
-- [ ] **Step 16: Extend the boundary guard**
+- [ ] **Step 18: Extend the boundary guard**
 
 Add one test to `test/main/electron-boundary.test.ts`, inside the existing `describe`:
 
@@ -2954,7 +3267,259 @@ Add one test to `test/main/electron-boundary.test.ts`, inside the existing `desc
   })
 ```
 
-- [ ] **Step 17: Verify**
+- [ ] **Step 19: Prove main and the preload agree on every channel, end to end**
+
+Two tests, neither of which the handler unit tests above can catch: a channel-name typo on either
+side of the bridge, and the path trust boundary wired for real rather than through an injected
+fake.
+
+Create `test/main/ipc/path-trust.test.ts` — the real `createTrustedPaths()` shared between the
+real dialog, dropped-file and transcribe handlers, the way `src/main/index.ts` wires them:
+
+```ts
+import { describe, expect, it } from 'vitest'
+import { createDialogHandlers } from '../../../src/main/ipc/dialog.js'
+import { createDroppedFileHandlers } from '../../../src/main/ipc/dropped-file.js'
+import { createTranscribeHandlers, type JobLike } from '../../../src/main/ipc/transcribe.js'
+import { createTrustedPaths } from '../../../src/main/ipc/trusted-paths.js'
+import type { Settings } from '../../../src/shared/types.js'
+
+const SETTINGS: Settings = {
+  version: 1,
+  englishOnly: false,
+  activeModel: 'base',
+  language: 'auto',
+  throughput: {},
+}
+
+function harness() {
+  const trustedPaths = createTrustedPaths()
+  const dialog = createDialogHandlers({
+    showOpenDialog: async () => ({ canceled: false, filePaths: ['/videos/dialog-pick.mp4'] }),
+    issuePath: trustedPaths.issue,
+  })
+  const droppedFile = createDroppedFileHandlers({ issuePath: trustedPaths.issue })
+  const transcribe = createTranscribeHandlers({
+    newJobId: () => 'job-1',
+    readSettings: async () => SETTINGS,
+    modelPathFor: () => '/models/base.bin',
+    isInstalled: async () => true,
+    createJob: (input) =>
+      ({
+        id: input.id,
+        state: { id: input.id, filePath: input.filePath, phase: 'probing', progress: 0, segments: [] },
+        start: () => new Promise<void>(() => {}),
+        cancel: () => {},
+        subscribe: () => () => {},
+      }) satisfies JobLike,
+    recordThroughput: async () => undefined,
+    emitState: () => {},
+    consumeTrustedPath: trustedPaths.consume,
+  })
+
+  return { dialog, droppedFile, transcribe }
+}
+
+describe('the path trust boundary end to end', () => {
+  it('start rejects a path main never issued', async () => {
+    const { transcribe } = harness()
+
+    await expect(transcribe.start('/etc/passwd')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('start accepts a path returned by dialog.openFile', async () => {
+    const { dialog, transcribe } = harness()
+    const path = await dialog.openFile()
+
+    await expect(transcribe.start(path)).resolves.toEqual(expect.any(String))
+  })
+
+  it('start accepts a path returned by droppedFile.pathFor (reported via register)', async () => {
+    const { droppedFile, transcribe } = harness()
+    await droppedFile.register('/videos/dropped.mp4')
+
+    await expect(transcribe.start('/videos/dropped.mp4')).resolves.toEqual(expect.any(String))
+  })
+})
+```
+
+Create `test/main/ipc/wiring.test.ts` — a fake `ipcMain`/`ipcRenderer` pair where `invoke` really
+dispatches to the matching `handle` listener, so the test can drive the actual preload module and
+observe exactly which channels it touches:
+
+```ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { CHANNELS } from '../../../src/shared/ipc.js'
+
+type Listener = (event: unknown, ...args: unknown[]) => unknown
+
+const registered = new Map<string, Listener>()
+const invoked = new Set<string>()
+const subscribed = new Set<string>()
+let exposedApi: Record<string, unknown> | undefined
+
+vi.mock('electron', () => ({
+  ipcMain: {
+    handle: (channel: string, listener: Listener) => {
+      registered.set(channel, listener)
+    },
+  },
+  ipcRenderer: {
+    invoke: async (channel: string, ...args: unknown[]) => {
+      invoked.add(channel)
+      const listener = registered.get(channel)
+      if (!listener) throw new Error(`no main handler registered for ${channel}`)
+      return listener({}, ...args)
+    },
+    on: (channel: string) => {
+      subscribed.add(channel)
+    },
+    off: () => {},
+  },
+  contextBridge: {
+    exposeInMainWorld: (_key: string, api: Record<string, unknown>) => {
+      exposedApi = api
+    },
+  },
+  webUtils: {
+    getPathForFile: () => '/videos/dropped.mp4',
+  },
+}))
+
+const REQUEST_CHANNELS = Object.values(CHANNELS).filter(
+  (channel) => channel !== CHANNELS.transcribeState && channel !== CHANNELS.modelsProgress,
+)
+
+async function registerAllHandlers(): Promise<void> {
+  const { registerIpcHandlers } = await import('../../../src/main/ipc/index.js')
+  registerIpcHandlers({
+    transcribe: {
+      start: async () => 'job-1',
+      cancel: async () => {},
+      stateOf: () => undefined,
+      cancelActive: async () => {},
+    },
+    models: {
+      list: async () => [],
+      download: async () => {},
+      cancelDownload: async () => {},
+      remove: async () => {},
+    },
+    settings: {
+      get: async () => ({
+        version: 1,
+        englishOnly: false,
+        activeModel: null,
+        language: 'auto',
+        throughput: {},
+      }),
+      set: async () => ({
+        version: 1,
+        englishOnly: false,
+        activeModel: null,
+        language: 'auto',
+        throughput: {},
+      }),
+    },
+    export: {
+      save: async () => '/videos/interview.txt',
+      reveal: async () => {},
+    },
+    dialog: {
+      openFile: async () => null,
+    },
+    droppedFile: {
+      register: async () => {},
+    },
+  })
+}
+
+async function exerciseThePreload(): Promise<void> {
+  await import('../../../src/preload/index.js')
+  const api = exposedApi as {
+    transcribe: {
+      start: (p: string) => Promise<unknown>
+      cancel: (id: string) => Promise<unknown>
+      onState: (cb: () => void) => void
+    }
+    models: {
+      list: () => Promise<unknown>
+      download: (id: string) => Promise<unknown>
+      cancelDownload: (id: string) => Promise<unknown>
+      remove: (id: string) => Promise<unknown>
+      onProgress: (cb: () => void) => void
+    }
+    settings: { get: () => Promise<unknown>; set: (p: object) => Promise<unknown> }
+    exportTranscript: { save: (id: string, as: string) => Promise<unknown> }
+    dialog: { openFile: () => Promise<unknown> }
+    shell: { reveal: (p: string) => Promise<unknown> }
+    droppedFile: { pathFor: (f: unknown) => string }
+  }
+
+  await api.transcribe.start('/videos/interview.mp4')
+  await api.transcribe.cancel('job-1')
+  api.transcribe.onState(() => {})
+
+  await api.models.list()
+  await api.models.download('tiny')
+  await api.models.cancelDownload('tiny')
+  await api.models.remove('tiny')
+  api.models.onProgress(() => {})
+
+  await api.settings.get()
+  await api.settings.set({})
+
+  await api.exportTranscript.save('job-1', 'txt')
+  await api.dialog.openFile()
+  await api.shell.reveal('/videos/interview.txt')
+
+  api.droppedFile.pathFor({} as never)
+  // pathFor's registration invoke is fire-and-forget; let it land.
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+describe('main and preload agree on every channel name', () => {
+  beforeEach(() => {
+    registered.clear()
+    invoked.clear()
+    subscribed.clear()
+    exposedApi = undefined
+    vi.resetModules()
+  })
+
+  it('registers exactly the channels the channel list declares as requests', async () => {
+    await registerAllHandlers()
+
+    expect([...registered.keys()].sort()).toEqual([...REQUEST_CHANNELS].sort())
+  })
+
+  it('invokes exactly the channels main registers — a typo on either side fails this', async () => {
+    await registerAllHandlers()
+    await exerciseThePreload()
+
+    expect([...invoked].sort()).toEqual([...registered.keys()].sort())
+  })
+
+  it('subscribes to exactly the two push channels', async () => {
+    await registerAllHandlers()
+    await exerciseThePreload()
+
+    expect([...subscribed].sort()).toEqual(
+      [CHANNELS.transcribeState, CHANNELS.modelsProgress].sort(),
+    )
+  })
+})
+```
+
+This is the wiring gap this project has been bitten by before: every handler above is unit-tested
+in isolation, and nothing until this step proves the channel *names* actually line up end to end.
+Both the registered set and the invoked set are computed, never hand-written, so a typo in the test
+itself cannot quietly agree with a typo in the code.
+
+Run: `npx vitest run test/main/ipc/path-trust.test.ts test/main/ipc/wiring.test.ts`
+Expected: PASS, 6 tests (3 + 3).
+
+- [ ] **Step 20: Verify**
 
 Run: `npm test && npm run typecheck && npm run build`
 Expected: everything passes; both programs clean; the build produces `out/main/index.js` with `electron`, `ffmpeg-static`, `ffprobe-static` and `node:*` as its only external imports.
@@ -2968,7 +3533,12 @@ Expected: rejects with `{code: 'NO_MODEL_INSTALLED', message: 'Choose a model fi
 Then: `await window.whisperDrop.shell.reveal('/etc/passwd')`.
 Expected: rejects with `code: 'INVALID_REQUEST'` and nothing opens in Finder.
 
-- [ ] **Step 18: Commit**
+Then, on a file dropped onto the window (or via `window.whisperDrop.dialog.openFile()`, since
+there is no drop zone yet): the returned path transcribes normally, and a path typed directly into
+`window.whisperDrop.transcribe.start('/etc/passwd')` — one main never issued — rejects with
+`code: 'INVALID_REQUEST'`.
+
+- [ ] **Step 21: Commit**
 
 ```bash
 git add src test
@@ -2982,11 +3552,16 @@ git commit -m "feat: validated IPC handlers and the composition root"
 
 - `npm run dev` opens a window with the full security posture (contextIsolation, sandbox,
   nodeIntegration off, CSP, denied window-opens and navigation).
-- The electron-import boundary test passes, failing the build on any import outside the allowlist.
+- The electron-import boundary test passes, failing the build on any import outside the allowlist,
+  and on any Node builtin or Node global reached from `src/renderer` or `src/shared`.
 - Every IPC handler unit-tests without an Electron harness.
 - Boundary validation holds: jobId is an opaque Map key never a path, model ids are checked against
   the catalog, format is checked against three literals, reveal is allowlisted to paths main
-  returned, and a second concurrent transcription is refused.
+  returned, `transcribe.start` accepts only a path main itself issued via `dialog.openFile` or a
+  dropped file's `pathFor`, and a second concurrent transcription is refused.
+- A test proves the exact set of channels `registerIpcHandlers` registers matches the exact set the
+  preload bridge invokes, so a channel-name typo on either side fails the suite rather than failing
+  silently at runtime.
 - The existing 211 tests stay green and stay fast.
 
 ## What part 3b picks up

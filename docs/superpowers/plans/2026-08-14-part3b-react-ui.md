@@ -2,34 +2,50 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Put a window in front of parts 1 and 2. An Electron shell with a hardened renderer, a narrow typed IPC surface that validates everything crossing it, and a React UI with five states — drop a file, watch honest progress, read the transcript, save it next to the source.
+**Goal:** The React UI in front of 3a's Electron shell — five states (drop a file, watch honest
+progress, read the transcript, save it next to the source, or see a plain-language error) plus the
+model picker, and one Playwright-on-Electron smoke test proving the whole chain wired together.
 
 **Architecture:** Four electron-importing files and nothing else. `src/main/index.ts` is the composition root: it is the only place that reads `app.getPath('userData')` and the only place that knows the real `probe`/`extract`/`runWhisper` collaborators exist. Every IPC handler module takes its dependencies by injection and knows nothing about Electron, so the whole boundary — id validation, the one-job-at-a-time rule, the reveal allowlist, error translation — is unit-tested without an app harness. The renderer is React with no router, no state library and no CSS framework; its state is one pure reducer, tested as pure data.
 
 **Tech Stack:** TypeScript 5 (ESM), Vitest 4, Node 22, Electron 43, electron-vite 5, Vite 7, React 19, `@vitejs/plugin-react` 5, Testing Library 16 + jsdom for components, `playwright`'s `_electron` for one smoke test.
 
 **Spec:** `docs/superpowers/specs/2026-08-14-part3-electron-app-design.md`
+(This spec doc lands in the same branch as this plan, `part-3-electron-app`; it does not exist on
+`main` until part 3 merges.)
 **Parent spec:** `docs/superpowers/specs/2026-08-13-whisper-drop-design.md` — binding authority.
 
 ## Scope
 
-This is plan 3 of 4. Parts 1 and 2 are merged on `main`: 211 tests, all green, `tsc --noEmit` clean.
+This is plan 3b of 4 (3a and 3b together are "plan 3" — one plan, split into two documents because
+the combined draft exceeded the review tool's size limit). It builds directly on 3a and assumes the
+IPC surface — `window.whisperDrop`, every handler, and the boundary validation, including the path
+trust boundary — already exists and is tested. Parts 1 and 2 are merged on `main`: 211 tests, all
+green, `tsc --noEmit` clean.
 
-**In scope:** the electron-vite scaffold, the main-process entry and window lifecycle with the spec's security posture, the preload bridge, the shared IPC contract types, five IPC handler modules, the composition root, `before-quit` cleanup, the React UI (drop zone, working, done, error, model picker), export-to-file with the collision rule, and one Playwright-on-Electron smoke test.
+**In scope:** the React UI (drop zone, working, done, error, model picker), export-to-file with the collision rule, and one Playwright-on-Electron smoke test.
+
+**Out of scope, built by 3a:** the electron-vite scaffold, the main-process entry and window
+lifecycle with the spec's security posture, the preload bridge, the shared IPC contract types, the
+IPC handler modules, the composition root, and `before-quit` cleanup.
 
 **Out of scope, deferred to plan 4:** `electron-builder` packaging, code signing, releases, GitHub Actions, the README and the Licenses screen. Also out, per the parent spec's Later list: batch queue, translation, custom vocabulary, word-level timestamps.
 
-**Deliverable:** `npm run dev` opens a working app. `npm test` passes the unit suite in seconds. `npm run test:e2e` launches the built app, transcribes `test/fixtures/hello.mp4`, and asserts the transcript renders.
+**Deliverable:** `npm run dev` opens a working app — drop a file, watch progress, read the
+transcript, save it. `npm test` passes the unit suite in seconds. `npm run test:e2e` launches the
+built app, transcribes `test/fixtures/hello.mp4`, and asserts the transcript renders.
 
 ## Deviations from the spec
 
-Three, recorded here so none of them is silent.
+Four, recorded here so none of them is silent.
 
 1. **Four files may import `electron`, not one directory.** The part 3 spec says "`src/main/ipc/` is the only directory permitted to import `electron`" and, two paragraphs later, that `src/main/index.ts` calls `app.getPath('userData')`. Those cannot both hold: `src/main/index.ts` is the Electron entry point and must call `app.whenReady()`. The rule this plan enforces — and enforces with a test, not a convention — is an explicit four-file allowlist: `src/main/index.ts`, `src/main/window.ts`, `src/main/ipc/index.ts`, `src/preload/index.ts`. Every handler module, and everything under `src/main/` that carries logic, stays plain Node. The parent spec's actual wording ("Modules under `src/main/` other than `ipc/` must not import `electron`") is about logic modules, and that intent is preserved exactly.
 
 2. **The shared types the renderer needs move to `src/shared/types.ts`.** The parent spec's "Shared types" section declares `ModelBaseId`, `ModelId`, `ModelEntry`, `DownloadProgress` and `Settings` as shared. Part 2 declared them inside `models/catalog.ts`, `models/download.ts` and `settings.ts` instead, which was correct while nothing else needed them. It is not correct now: the renderer must name them, and the renderer must not import from `src/main/`. Task 2 moves the declarations to `src/shared/types.ts` and re-exports them from their current homes, so every existing import keeps working. **Verified:** this move alone leaves all 211 existing tests green and `tsc --noEmit` clean.
 
 3. **The IPC surface gains `droppedFile.pathFor(file)`.** Neither spec lists it, and without it the drop zone cannot work at all: Electron 32 removed the `File.path` property, and a dropped file's real path is now obtainable only from a preload calling `webUtils.getPathForFile(file)`. This is the one addition to the contract, and it is a getter over an OS-supplied `File`, not a new capability.
+
+4. **A path trust boundary the specs describe as a property, not a mechanism.** 3a's `src/main/ipc/trusted-paths.ts` is a small issue/consume registry held in main. `dialog.openFile` and the preload's `droppedFile.pathFor` are the only two ways a path reaches the renderer, and both issue into it — `pathFor` does so over a new renderer-to-main-only channel, `droppedFileRegister`, never exposed on `WhisperDropApi`. `transcribe.start` consumes an entry before acting on a path and rejects anything else with `INVALID_REQUEST`. This is built entirely in 3a; it is recorded here too because it changes what the drop zone in Task 4/5 can assume: the path it gets back from `pathFor` is already trusted by the time `transcribe.start` is called, so this UI never needs to think about the boundary itself.
 
 ## Global Constraints
 
@@ -38,7 +54,7 @@ Every task's requirements implicitly include these.
 - **Only four files may import `electron`:** `src/main/index.ts`, `src/main/window.ts`, `src/main/ipc/index.ts`, `src/preload/index.ts`. Everything else — every handler module, every logic module, the whole renderer — is plain Node or plain browser. This is what keeps the suite running without an app harness. Task 1 adds `test/main/electron-boundary.test.ts`, which fails the build if the allowlist is broken.
 - **Only `src/main/ipc/index.ts` touches `ipcMain`.** Handler modules take dependencies by injection and return plain functions.
 - **`jobId` is generated in main with `randomUUID()`, is a `Map` key, and is never a path component.** Part 1's `tempWavPath(id)` interpolates the id straight into a filesystem path; a renderer-supplied id would be a traversal. Handlers look jobs up in the map and reject an unknown id.
-- **The renderer never constructs a filesystem path.** It reads `JobState.filePath` to show a filename and it passes back opaque ids and format literals. `exportTranscript.save` derives the output path from main's own record of the job. `shell.reveal` accepts only a path main itself previously returned.
+- **A filesystem path only ever reaches `transcribe.start` if main issued it first.** `dialog.openFile` and `droppedFile.pathFor` are the only two ways a path enters the renderer; both record it in a main-held `TrustedPaths` registry (`src/main/ipc/trusted-paths.ts`) before the renderer sees it, and `transcribe.start` consumes — checks and removes — an entry before acting on a path, rejecting anything else with `INVALID_REQUEST`. The renderer otherwise never constructs a path: it reads `JobState.filePath` to show a filename and passes back opaque ids and format literals. `exportTranscript.save` derives the output path from main's own record of the job. `shell.reveal` accepts only a path main itself previously returned, via the same issue-then-check pattern.
 - **No new runtime dependency beyond the spec's list:** `electron`, `electron-vite`, `vite`, `react`, `react-dom`, `@vitejs/plugin-react`, `@testing-library/react`, `@testing-library/user-event`, `jsdom`, `playwright`. No UI component library, no CSS framework, no state-management library, no icon font.
 - **The renderer loads nothing from the network,** at any point, in dev or in production.
 - **`ErrorCode` stays at nine values.** The three boundary conditions this part introduces live in a separate `IpcBoundaryCode` union.
@@ -67,11 +83,13 @@ Every task's requirements implicitly include these.
 | `src/main/ipc/index.ts` | The only `ipcMain.handle` calls |
 | `src/main/ipc/errors.ts` | `IpcError`, `toFailure`, `toResult` |
 | `src/main/ipc/validate.ts` | The three boundary validators |
-| `src/main/ipc/transcribe.ts` | Job map, one-job-at-a-time, throughput recording |
+| `src/main/ipc/trusted-paths.ts` | The issue/consume registry behind the path trust boundary |
+| `src/main/ipc/transcribe.ts` | Job map, one-job-at-a-time, throughput recording, path trust check |
 | `src/main/ipc/models.ts` | Picker rows, download, cancel, remove |
 | `src/main/ipc/settings.ts` | Read, and a whitelisted patch |
 | `src/main/ipc/export.ts` | Save, and the reveal allowlist |
-| `src/main/ipc/dialog.ts` | The browse fallback |
+| `src/main/ipc/dialog.ts` | The browse fallback; issues the chosen path as trusted |
+| `src/main/ipc/dropped-file.ts` | Registers a dropped file's `pathFor` result as trusted |
 | `src/main/export/save.ts` | Next-to-source naming and the ` (2)` collision rule |
 | `src/renderer/index.html` | Document shell. CSP is injected at build time |
 | `src/renderer/main.tsx` | React root |
@@ -1541,6 +1559,12 @@ beforeAll(async () => {
   userData = await mkdtemp(join(tmpdir(), 'whisper-drop-e2e-'))
   await mkdir(join(userData, 'models'), { recursive: true })
   await copyFile(TINY_MODEL, join(userData, 'models', 'tiny.bin'))
+  // Asserted separately from the source-file check above: if the copy silently
+  // failed or landed at the wrong path, the failure should say so, rather than
+  // surfacing 240 seconds later as a mysterious NO_MODEL_INSTALLED/timeout.
+  expect(existsSync(join(userData, 'models', 'tiny.bin')), 'seeded model did not land in userData').toBe(
+    true,
+  )
   await writeFile(
     join(userData, 'settings.json'),
     JSON.stringify({
