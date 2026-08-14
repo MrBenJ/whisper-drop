@@ -178,21 +178,30 @@ type MediaInfo = {
   container: string
 }
 
-type ModelId =
-  | 'tiny' | 'tiny.en'
-  | 'base' | 'base.en'
-  | 'small' | 'small.en'
-  | 'large-v3-turbo'
-  | 'large-v3'
+// What the user picks: a row in the model list.
+type ModelBaseId =
+  | 'tiny' | 'base' | 'small' | 'large-v3-turbo' | 'large-v3'
+
+// What actually gets downloaded and run.
+type ModelId = ModelBaseId | 'tiny.en' | 'base.en' | 'small.en'
+
+// Pure. The only place the base -> concrete mapping lives.
+// Returns the .en variant when English-only is on and one exists,
+// otherwise the multilingual weights.
+declare function resolveModelId(
+  base: ModelBaseId,
+  englishOnly: boolean,
+): ModelId
 
 type ModelEntry = {
   id: ModelId
+  base: ModelBaseId
   label: string
   bytes: number
   sha256: string
   url: string
   blurb: string
-  englishOnly: boolean
+  englishOnly: boolean    // true for the .en weights
 }
 
 type JobPhase =
@@ -231,8 +240,9 @@ type DownloadProgress = {
 }
 
 type Settings = {
-  activeModel: ModelId | null
-  language: string          // ISO 639-1 code, or 'auto'
+  englishOnly: boolean      // defaults from OS locale on first launch
+  activeModel: ModelBaseId | null
+  language: string          // ISO 639-1 code, or 'auto'. Ignored while englishOnly.
   throughput: Partial<Record<ModelId, {
     realtimeFactor: number  // durationMs / transcribeElapsedMs
     samples: number
@@ -251,7 +261,13 @@ transcribe.start(filePath): Promise<string>   // jobId
 transcribe.cancel(jobId): Promise<void>
 transcribe.onState(cb: (s: JobState) => void): Unsubscribe
 
-models.list(): Promise<(ModelEntry & { installed: boolean })[]>
+// One entry per picker row, already resolved against the English-only toggle.
+models.list(): Promise<{
+  base: ModelBaseId
+  resolved: ModelEntry
+  installed: boolean
+  realtimeFactor?: number   // measured on this machine; absent if never run
+}[]>
 models.download(id): Promise<void>
 models.cancelDownload(id): Promise<void>
 models.remove(id): Promise<void>
@@ -320,9 +336,40 @@ repository. Approximate sizes:
 Exact byte counts and sha256 hashes are read from upstream and pinned into the
 catalog during implementation. They are never approximated in code.
 
-English-only `.en` variants of `tiny`, `base`, and `small` are included in the
-catalog but hidden behind an "English-only variants" disclosure in the picker,
-so the default list stays five entries.
+### The English-only toggle
+
+The picker carries one toggle: **English only** / **All languages**. It does not
+lengthen the list — it swaps which weights the same five rows resolve to.
+
+OpenAI never shipped English-only weights above `medium`, so the swap is partial:
+
+| Row | All languages | English only |
+|---|---|---|
+| `tiny` | `tiny` | `tiny.en` |
+| `base` | `base` | `base.en` |
+| `small` | `small` | `small.en` |
+| `large-v3-turbo` | `large-v3-turbo` | *unchanged* — multilingual weights, still the most accurate option for English |
+| `large-v3` | `large-v3` | *unchanged* — same |
+
+The two large rows stay visible in English-only mode with that note attached.
+Hiding them would be baffling given `large-v3-turbo` is the recommendation.
+
+`resolveModelId(base, englishOnly)` is the single pure function performing this
+mapping. Nothing else in the codebase constructs a concrete `ModelId`.
+
+**The toggle absorbs the language setting.** English-only implies `language =
+'en'`, so the language control is hidden while the toggle is on. One control
+instead of two, and the mode is stated in one place rather than inferred from
+the combination.
+
+**It defaults from the OS locale** on first launch: an English system language
+starts in English-only. Correct for the primary audience without being wrong for
+everyone else.
+
+**The honest cost:** `base` and `base.en` are separate files on disk, so flipping
+the toggle can turn an installed row into an uninstalled one. The picker shows
+install state per resolved model and says so directly rather than hiding it.
+Flipping the toggle never deletes anything.
 
 ### Downloading
 
@@ -377,8 +424,9 @@ only needs the clipboard, and one click is cheaper than a setting nobody finds.
 
 ### Options
 
-Two, both in the header: **model** and **language** (auto-detect by default, or
-forced from a list). Everything else is in [Later](#later).
+In the header: **model**, and the **English only / All languages** toggle. The
+language selector (auto-detect, or forced from a list) appears only when the
+toggle is set to All languages. Everything else is in [Later](#later).
 
 ## Error handling
 
@@ -434,7 +482,11 @@ Test-first throughout.
 - `whisper/parse`: fixture files of real `whisper-cli` stdout, including
   interleaved progress and log lines that must be ignored.
 - `models/catalog`: structural assertion that every entry has a well-formed URL
-  and a 64-character hex hash.
+  and a 64-character hex hash, and that every `ModelBaseId` has a multilingual
+  entry.
+- `resolveModelId`: returns the `.en` variant for `tiny`/`base`/`small` when
+  English-only is on, returns the multilingual id for `large-v3-turbo` and
+  `large-v3` in both modes, and round-trips unchanged when the toggle is off.
 
 **Unit — `transcription-job`** with fake probe/extract/runner injected: phase
 transitions, progress banding, ETA suppression before 10%, cancel deletes the
