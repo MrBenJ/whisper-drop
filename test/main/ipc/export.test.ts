@@ -159,4 +159,19 @@ describe('shell.reveal', () => {
     await handlers.reveal(srt)
     expect(revealed).toEqual([txt, srt])
   })
+
+  it('does not grow without bound as more transcripts get saved', async () => {
+    let counter = 0
+    const { handlers } = harness({
+      writeTranscript: async () => `/videos/interview-${counter++}.srt`,
+    })
+
+    for (let i = 0; i < 501; i++) await handlers.save('job-1', 'srt')
+
+    // The oldest saved path was evicted; the most recent is still revealable.
+    await expect(handlers.reveal('/videos/interview-500.srt')).resolves.toBeUndefined()
+    await expect(handlers.reveal('/videos/interview-0.srt')).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+  })
 })

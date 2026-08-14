@@ -8,6 +8,13 @@
  */
 export type TrustedPaths = {
   issue(path: string): void
+  /**
+   * Non-consuming: true if `path` is still trusted. `transcribe.start` checks
+   * this before any later step that can still reject the request (busy, no
+   * model, model missing) — a rejection there must not burn the one path a
+   * retry would need. See `consume`.
+   */
+  has(path: string): boolean
   /** True and removes the entry; false leaves nothing behind to retry. */
   consume(path: string): boolean
 }
@@ -25,6 +32,9 @@ export function createTrustedPaths(): TrustedPaths {
         if (oldest !== undefined) issued.delete(oldest)
       }
       issued.add(path)
+    },
+    has(path) {
+      return issued.has(path)
     },
     consume(path) {
       return issued.delete(path)

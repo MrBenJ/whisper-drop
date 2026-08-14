@@ -40,4 +40,27 @@ describe('createTrustedPaths', () => {
     expect(paths.consume('/videos/999.mp4')).toBe(true)
     expect(paths.consume('/videos/0.mp4')).toBe(false)
   })
+
+  it('has checks without consuming', () => {
+    const paths = createTrustedPaths()
+    paths.issue('/videos/a.mp4')
+
+    expect(paths.has('/videos/a.mp4')).toBe(true)
+    expect(paths.has('/videos/a.mp4')).toBe(true)
+    expect(paths.consume('/videos/a.mp4')).toBe(true)
+  })
+
+  it('has returns false for a path never issued', () => {
+    const paths = createTrustedPaths()
+
+    expect(paths.has('/etc/passwd')).toBe(false)
+  })
+
+  it('has returns false once the entry has been consumed', () => {
+    const paths = createTrustedPaths()
+    paths.issue('/videos/a.mp4')
+    paths.consume('/videos/a.mp4')
+
+    expect(paths.has('/videos/a.mp4')).toBe(false)
+  })
 })

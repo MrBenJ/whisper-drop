@@ -35,6 +35,7 @@ function harness() {
       }) satisfies JobLike,
     recordThroughput: async () => undefined,
     emitState: () => {},
+    hasTrustedPath: trustedPaths.has,
     consumeTrustedPath: trustedPaths.consume,
   })
 

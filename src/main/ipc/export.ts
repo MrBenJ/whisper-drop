@@ -18,6 +18,10 @@ export type ExportHandlers = {
   reveal(path: unknown): Promise<void>
 }
 
+/** Same bound as trusted-paths.ts's MAX_ISSUED, and for the same reason: caps
+ * memory if the app runs a long time and exports without ever revealing. */
+const MAX_REVEALABLE = 500
+
 export function createExportHandlers(deps: ExportDeps): ExportHandlers {
   // Reveal only ever surfaces a path this process itself produced. The
   // renderer cannot name one.
@@ -58,6 +62,10 @@ export function createExportHandlers(deps: ExportDeps): ExportHandlers {
       )
     }
 
+    if (revealable.size >= MAX_REVEALABLE) {
+      const oldest = revealable.values().next().value
+      if (oldest !== undefined) revealable.delete(oldest)
+    }
     revealable.add(path)
     return path
   }

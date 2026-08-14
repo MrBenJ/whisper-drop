@@ -47,6 +47,16 @@ function createFakeJob(input: JobInput) {
   return { job, input, emit, finishStart: () => resolveStart() }
 }
 
+type Deferred<T> = { promise: Promise<T>; resolve: (value: T) => void }
+
+function deferred<T = void>(): Deferred<T> {
+  let resolve: (value: T) => void = () => {}
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
+
 function harness(overrides: Partial<Parameters<typeof createTranscribeHandlers>[0]> = {}) {
   const created: ReturnType<typeof createFakeJob>[] = []
   const states: JobState[] = []
@@ -67,7 +77,8 @@ function harness(overrides: Partial<Parameters<typeof createTranscribeHandlers>[
     emitState: (state) => states.push(state),
     // Every existing test drops a file "already selected through whisper-drop";
     // the trust-boundary tests below override this explicitly.
-    consumeTrustedPath: () => true,
+    hasTrustedPath: () => true,
+    consumeTrustedPath: () => {},
     ...overrides,
   })
 
@@ -105,19 +116,53 @@ describe('transcribe.start', () => {
   })
 
   it('rejects a path main never issued', async () => {
-    const { handlers, created } = harness({ consumeTrustedPath: () => false })
+    const { handlers, created } = harness({ hasTrustedPath: () => false })
 
     await expect(handlers.start('/etc/passwd')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     expect(created).toHaveLength(0)
   })
 
   it('accepts a path main issued, and consumes it exactly once', async () => {
-    const consumeTrustedPath = vi.fn((path: string) => path === '/videos/interview.mp4')
-    const { handlers, created } = harness({ consumeTrustedPath })
+    // A minimal stand-in for the real trusted-paths registry: hasTrustedPath
+    // stays true only until consumeTrustedPath actually removes the entry.
+    const trusted = new Set(['/videos/interview.mp4'])
+    const hasTrustedPath = vi.fn((path: string) => trusted.has(path))
+    const consumeTrustedPath = vi.fn((path: string) => {
+      trusted.delete(path)
+    })
+    const { handlers, created } = harness({ hasTrustedPath, consumeTrustedPath })
     await handlers.start('/videos/interview.mp4')
 
     expect(created).toHaveLength(1)
     expect(consumeTrustedPath).toHaveBeenCalledWith('/videos/interview.mp4')
+    expect(consumeTrustedPath).toHaveBeenCalledTimes(1)
+
+    // Proves consume actually spent the entry, not just that it was called.
+    await expect(handlers.start('/videos/interview.mp4')).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+  })
+
+  it('leaves the path usable for a retry when a later check rejects the request', async () => {
+    // Mirrors a fresh profile: defaultSettings() sets activeModel: null, so a
+    // brand-new install's very first drop must not burn its own path.
+    const trusted = new Set(['/a.wav'])
+    let settings: Settings = { ...SETTINGS, activeModel: null }
+    const { handlers, created } = harness({
+      hasTrustedPath: (path) => trusted.has(path),
+      consumeTrustedPath: (path) => {
+        trusted.delete(path)
+      },
+      readSettings: async () => settings,
+    })
+
+    await expect(handlers.start('/a.wav')).rejects.toMatchObject({ code: 'NO_MODEL_INSTALLED' })
+    expect(trusted.has('/a.wav')).toBe(true)
+
+    // Once a model is chosen, the very same path — never re-selected — works.
+    settings = SETTINGS
+    await expect(handlers.start('/a.wav')).resolves.toBe('job-1')
+    expect(created).toHaveLength(1)
   })
 
   it('resolves the model against the English-only toggle', async () => {
@@ -228,9 +273,11 @@ describe('transcribe.start', () => {
   })
 
   it('does not record throughput for a cancelled or failed job', async () => {
-    const { handlers, recordThroughput } = harness()
-    const id = await handlers.start('/a.wav')
-    await handlers.cancel(id)
+    const { handlers, created, recordThroughput } = harness()
+    await handlers.start('/a.wav')
+    // realtimeFactor is set deliberately, so it's the phase check — not the
+    // `realtimeFactor !== undefined` guard alone — that has to reject this.
+    created[0]?.emit({ phase: 'cancelled', realtimeFactor: 5 })
 
     expect(recordThroughput).not.toHaveBeenCalled()
   })
@@ -327,5 +374,41 @@ describe('transcribe.cancelActive', () => {
     const { handlers } = harness()
 
     await expect(handlers.cancelActive()).resolves.toBeUndefined()
+  })
+
+  it('waits out a start() that has not reached job.start() yet, rather than racing it', async () => {
+    const gate = deferred<void>()
+    const { handlers, created } = harness({
+      readSettings: async () => {
+        await gate.promise
+        return SETTINGS
+      },
+    })
+
+    const starting = handlers.start('/a.wav')
+
+    let settled = false
+    const quit = handlers.cancelActive().then(() => {
+      settled = true
+    })
+
+    // start() is still stuck inside readSettings: no job exists yet, so the
+    // old implementation would have resolved cancelActive here regardless.
+    await Promise.resolve()
+    expect(created).toHaveLength(0)
+    expect(settled).toBe(false)
+
+    gate.resolve()
+    await starting
+
+    // The job now exists; cancelActive should have moved on to cancel it and
+    // wait for its cleanup, exactly like the "running job" case above.
+    await Promise.resolve()
+    expect(created[0]?.job.state.phase).toBe('cancelled')
+    expect(settled).toBe(false)
+
+    created[0]?.finishStart()
+    await quit
+    expect(settled).toBe(true)
   })
 })

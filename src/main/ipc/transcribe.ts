@@ -23,11 +23,16 @@ export type TranscribeDeps = {
   recordThroughput: (id: ModelId, realtimeFactor: number) => Promise<unknown>
   emitState: (state: JobState) => void
   /**
-   * True and consumes the entry if `filePath` is one main itself issued, via
+   * Non-consuming: true if `filePath` is one main itself issued, via
    * `dialog.openFile` or a dropped file's `pathFor`. The renderer cannot name
-   * a path main did not first hand it — this is what enforces that.
+   * a path main did not first hand it — this is what enforces that. Checked
+   * before any later step (busy, no model, model missing) that can still
+   * reject the request, so a rejection there doesn't spend the path — see
+   * `consumeTrustedPath`.
    */
-  consumeTrustedPath: (filePath: string) => boolean
+  hasTrustedPath: (filePath: string) => boolean
+  /** Spends the trust entry. Called only once `start` is committed to running. */
+  consumeTrustedPath: (filePath: string) => void
 }
 
 export type TranscribeHandlers = {
@@ -52,13 +57,21 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
   // the busy check.
   let starting = false
   let activeRun: Promise<void> = Promise.resolve()
+  // Resolves once the in-flight start() has either produced a job or failed.
+  // Before that, activeId is still null — there is no job for cancelActive to
+  // cancel yet — but a temp WAV may be about to be created, so a quit landing
+  // in this window must wait it out rather than proceeding immediately.
+  let pendingStart: Promise<void> = Promise.resolve()
 
   async function start(filePath: unknown): Promise<string> {
     const path = requireNonEmptyString(filePath, 'filePath')
 
     // Boundary check first, before the busy check: a forged path is rejected
-    // the same way whether or not a job happens to be running.
-    if (!deps.consumeTrustedPath(path)) {
+    // the same way whether or not a job happens to be running. Non-consuming:
+    // spending the entry here would strand a legitimate retry behind a later
+    // rejection (busy / no model / model missing) — see consumeTrustedPath
+    // below, called only once start is committed to running.
+    if (!deps.hasTrustedPath(path)) {
       throw new IpcError(
         'INVALID_REQUEST',
         'That file was not selected through whisper-drop.',
@@ -74,6 +87,11 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
     }
     starting = true
 
+    let settlePendingStart: () => void = () => {}
+    pendingStart = new Promise((resolve) => {
+      settlePendingStart = resolve
+    })
+
     try {
       const settings = await deps.readSettings()
       if (settings.activeModel === null) {
@@ -88,6 +106,10 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
           `model=${modelId}`,
         )
       }
+
+      // Spent only now: every check above can still reject, and a rejection
+      // must not burn the one path a retry would need.
+      deps.consumeTrustedPath(path)
 
       const id = deps.newJobId()
       const job = deps.createJob({
@@ -122,6 +144,7 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
       return id
     } finally {
       starting = false
+      settlePendingStart()
     }
   }
 
@@ -139,6 +162,9 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
   }
 
   async function cancelActive(): Promise<void> {
+    // Wait out any start() that hasn't reached job.start() yet — before it
+    // settles, activeId is still null and there is nothing here to cancel.
+    await pendingStart
     if (activeId !== null) jobs.get(activeId)?.cancel()
     await activeRun.catch(() => {})
   }
