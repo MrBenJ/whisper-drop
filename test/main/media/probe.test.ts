@@ -55,7 +55,9 @@ describe('probe', () => {
   })
 
   it('throws UNREADABLE_MEDIA when ffprobe emits unparseable output', async () => {
-    await expect(probe('/tmp/a.mp4', { execFile: fakeExec('not json') })).rejects.toBeInstanceOf(AppError)
+    await expect(probe('/tmp/a.mp4', { execFile: fakeExec('not json') })).rejects.toMatchObject({
+      code: 'UNREADABLE_MEDIA',
+    })
   })
 
   it('throws UNREADABLE_MEDIA when the duration is missing', async () => {
@@ -65,14 +67,35 @@ describe('probe', () => {
     })
   })
 
+  it('throws UNREADABLE_MEDIA when the duration is zero', async () => {
+    const stdout = JSON.stringify({ format: { duration: '0', format_name: 'wav' }, streams: [{ codec_type: 'audio' }] })
+    await expect(probe('/tmp/a.wav', { execFile: fakeExec(stdout) })).rejects.toMatchObject({
+      code: 'UNREADABLE_MEDIA',
+    })
+  })
+
+  it('respects injected ffprobePath', async () => {
+    let capturedFile: string = ''
+    const execFile = async (file: string) => {
+      capturedFile = file
+      return { stdout: withAudio, stderr: '' }
+    }
+    await probe('/tmp/a.mp4', { ffprobePath: '/custom/ffprobe', execFile })
+    expect(capturedFile).toBe('/custom/ffprobe')
+  })
+
   it('passes the expected arguments to ffprobe', async () => {
-    let captured: string[] = []
-    const execFile = async (_file: string, args: string[]) => {
-      captured = args
+    let capturedFile: string = ''
+    let capturedArgs: string[] = []
+    const execFile = async (file: string, args: string[]) => {
+      capturedFile = file
+      capturedArgs = args
       return { stdout: withAudio, stderr: '' }
     }
     await probe('/tmp/a.mp4', { execFile })
-    expect(captured).toEqual([
+    expect(capturedFile).toBeTruthy()
+    expect(capturedFile).toMatch(/ffprobe$/)
+    expect(capturedArgs).toEqual([
       '-v', 'error',
       '-print_format', 'json',
       '-show_format',

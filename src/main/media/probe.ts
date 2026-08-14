@@ -55,7 +55,7 @@ export async function probe(filePath: string, deps: ProbeDeps = {}): Promise<Med
   }
 
   const durationSeconds = Number(parsed.format?.duration)
-  if (!Number.isFinite(durationSeconds) || durationSeconds < 0) {
+  if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
     throw unreadable(filePath, `ffprobe reported no usable duration: ${parsed.format?.duration}`)
   }
 
