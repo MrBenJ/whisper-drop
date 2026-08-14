@@ -1,19 +1,13 @@
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import type { Settings } from '../shared/types.js'
 import { CATALOG, MODEL_BASE_ORDER, type ModelBaseId, type ModelId } from './models/catalog.js'
 
 const CURRENT_VERSION = 1 as const
 const VALID_MODEL_IDS: ReadonlySet<string> = new Set(CATALOG.map((entry) => entry.id))
 
-export type Settings = {
-  version: typeof CURRENT_VERSION
-  englishOnly: boolean
-  activeModel: ModelBaseId | null
-  /** ISO 639-1 code, or 'auto'. Ignored while englishOnly. */
-  language: string
-  throughput: Partial<Record<ModelId, { realtimeFactor: number; samples: number }>>
-}
+export type { Settings }
 
 export function defaultSettings(locale: string): Settings {
   return {

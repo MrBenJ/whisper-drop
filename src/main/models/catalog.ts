@@ -1,19 +1,9 @@
-/** A row in the model picker. */
-export type ModelBaseId = 'tiny' | 'base' | 'small' | 'large-v3-turbo' | 'large-v3'
+import type { ModelBaseId, ModelEntry, ModelId } from '../../shared/types.js'
 
-/** A concrete model file. */
-export type ModelId = ModelBaseId | 'tiny.en' | 'base.en' | 'small.en'
-
-export type ModelEntry = {
-  id: ModelId
-  base: ModelBaseId
-  label: string
-  bytes: number
-  sha256: string
-  url: string
-  blurb: string
-  englishOnly: boolean
-}
+// Declared in shared/types so the renderer can name them without importing
+// anything from main. Re-exported here because this module remains the place
+// the rest of main imports them from.
+export type { ModelBaseId, ModelEntry, ModelId }
 
 /** Picker order: ascending by capability. */
 export const MODEL_BASE_ORDER: readonly ModelBaseId[] = [
