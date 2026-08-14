@@ -10,7 +10,7 @@ main: processing 'audio.wav' (48000 samples, 3.0 sec), 4 threads, 1 processors, 
 
 [00:00:00.000 --> 00:00:02.000]   Testing one two
 [00:00:02.000 --> 00:00:03.000]   three four.
-[00:00:03.000 --> 00:00:04.000]
+[00:00:03.000 --> 00:00:04.000]  
 
 whisper_print_timings:     load time =   120.00 ms
 whisper_print_timings:    total time =   980.00 ms
