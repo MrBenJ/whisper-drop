@@ -258,3 +258,39 @@ no state-management library — the app has five states and one active job.
 5. **No UI component library or CSS framework.** Alternative: shadcn/Tailwind, which is faster to
    assemble but adds dependency weight and a generic look to an app whose whole pitch is being a
    focused single-purpose tool. *Cost if wrong:* more hand-written CSS.
+
+## Corrections found during planning
+
+Compile-verifying the plan against a real build surfaced eight defects in this spec. All are
+corrected in `docs/superpowers/plans/2026-08-14-part3-electron-app.md`; recorded here so the two
+documents agree and so the errors are not repeated.
+
+1. **The electron-import rule contradicted itself.** This spec says only `src/main/ipc/` may import
+   `electron`, and also that `src/main/index.ts` calls `app.getPath('userData')`. Both cannot hold.
+   Resolution: a four-file allowlist enforced by a test that fails the build on any other import —
+   a check rather than a convention.
+2. **Drag-and-drop is impossible as specified.** Electron 32 removed `File.path`, so the renderer
+   cannot learn a dropped file's path. Resolution: a `droppedFile.pathFor` preload method backed by
+   `webUtils.getPathForFile`. Without this the app's central interaction does not work.
+3. **Errors cannot cross `contextBridge` intact.** The bridge copies only `message` and `stack` off
+   a thrown `Error`, silently dropping `code` and `detail` — the two fields the entire error UI is
+   built on. Resolution: carry failures as data (`IpcResult`) rather than throwing across the
+   bridge.
+4. **Three boundary conditions have no matching `ErrorCode`** (unknown job id, non-allowlisted
+   reveal path, second concurrent job). The parent spec fixes the enum at nine values, so widening
+   it is not available. Resolution: a separate `IpcBoundaryCode` union.
+5. **The CSP as specified breaks `npm run dev`** — the React Fast Refresh preamble is an inline
+   module script that `script-src 'self'` blocks. Resolution: inject the tag from the Vite config
+   with a dev/prod branch, production strict, and unit-test the branching.
+6. **"Shown whenever no model is installed" is ambiguous once the toggle exists.** Resolution:
+   first-run means the *active row's resolved* model is not on disk, which makes the toggle's
+   honest cost visible rather than hiding it.
+7. **"Freeze the progress display" was underspecified.** Resolution: accept the new phase and
+   segments but retain the last-seen `progress` and `etaMs`, so state stays truthful and only the
+   presentation stops chasing.
+8. **The transcript paragraph rule had no threshold.** Resolution: a named 1500 ms gap constant.
+
+**Carried to part 4:** `binaries.ts` resolves `../../resources/<platform>-<arch>` from `out/main/`
+and lands on the repo's `resources/` by a coincidence of directory depth. It works and was
+verified, but nothing asserts it, and only the e2e smoke test would catch a break — by failing to
+transcribe. Packaging must pin this properly.
