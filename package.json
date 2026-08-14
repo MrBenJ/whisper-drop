@@ -1,0 +1,20 @@
+{
+  "name": "whisper-drop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:integration": "node scripts/fetch-test-model.mjs && vitest run --config vitest.integration.config.ts",
+    "setup": "node scripts/build-whisper.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.0"
+  }
+}
