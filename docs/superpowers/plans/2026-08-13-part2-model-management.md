@@ -45,7 +45,7 @@ Pure data and one pure function. The hashes below are real: they were read from 
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `ModelBaseId`, `ModelId`, `ModelEntry`, `CATALOG`, `resolveModelId(base, englishOnly)`, `entryFor(id)`, `baseIds()`, `MODEL_BASE_ORDER`.
+- Produces: `ModelBaseId`, `ModelId`, `ModelEntry`, `CATALOG`, `resolveModelId(base, englishOnly)`, `entryFor(id)`, `baseIds()`, `MODEL_BASE_ORDER`, `MODEL_URL_PREFIX`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -56,6 +56,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CATALOG,
   MODEL_BASE_ORDER,
+  MODEL_URL_PREFIX,
   baseIds,
   entryFor,
   resolveModelId,
@@ -119,6 +120,13 @@ describe('CATALOG integrity', () => {
       expect(entry.url).toBe(
         `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${entry.id}.bin`,
       )
+    }
+  })
+
+  it('builds every url from the exported MODEL_URL_PREFIX, the downloader\'s trust boundary', () => {
+    expect(MODEL_URL_PREFIX).toBe('https://huggingface.co/ggerganov/whisper.cpp/resolve/main/')
+    for (const entry of CATALOG) {
+      expect(entry.url.startsWith(MODEL_URL_PREFIX)).toBe(true)
     }
   })
 
@@ -190,7 +198,13 @@ export const MODEL_BASE_ORDER: readonly ModelBaseId[] = [
   'large-v3',
 ]
 
-const HUGGINGFACE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main'
+/**
+ * Single source of truth for the trust boundary: every catalog URL is built
+ * from this prefix, and the downloader validates full URLs against it (not
+ * just the host) so a catalog entry pointing at a different repo on the same
+ * host is refused.
+ */
+export const MODEL_URL_PREFIX = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/'
 
 function entry(
   id: ModelId,
@@ -206,7 +220,7 @@ function entry(
     label,
     bytes,
     sha256,
-    url: `${HUGGINGFACE}/ggml-${id}.bin`,
+    url: `${MODEL_URL_PREFIX}ggml-${id}.bin`,
     blurb,
     englishOnly: id.endsWith('.en'),
   }
@@ -421,6 +435,22 @@ describe('reading malformed but structurally-valid JSON', () => {
     expect(settings.throughput).toEqual({ base: { realtimeFactor: 12, samples: 3 } })
   })
 
+  it('drops throughput keys that are structurally valid but not a real ModelId', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({
+        version: 1,
+        throughput: {
+          base: { realtimeFactor: 12, samples: 3 },
+          'not-a-model': { realtimeFactor: 5, samples: 1 },
+        },
+      }),
+      'utf8',
+    )
+    const settings = await createSettingsStore(dir, 'en-US').read()
+    expect(settings.throughput).toEqual({ base: { realtimeFactor: 12, samples: 3 } })
+  })
+
   it('falls back to the locale default when englishOnly is not a boolean', async () => {
     await writeFile(
       join(dir, 'settings.json'),
@@ -488,9 +518,10 @@ Expected: FAIL — cannot resolve `settings.js`.
 ```ts
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { MODEL_BASE_ORDER, type ModelBaseId, type ModelId } from './models/catalog.js'
+import { CATALOG, MODEL_BASE_ORDER, type ModelBaseId, type ModelId } from './models/catalog.js'
 
 const CURRENT_VERSION = 1 as const
+const VALID_MODEL_IDS: ReadonlySet<string> = new Set(CATALOG.map((entry) => entry.id))
 
 export type Settings = {
   version: typeof CURRENT_VERSION
@@ -530,7 +561,7 @@ function coerceThroughput(value: unknown): Settings['throughput'] {
   if (!isPlainObject(value)) return {}
   const result: Settings['throughput'] = {}
   for (const [id, entry] of Object.entries(value)) {
-    if (isThroughputEntry(entry)) result[id as ModelId] = entry
+    if (VALID_MODEL_IDS.has(id) && isThroughputEntry(entry)) result[id as ModelId] = entry
   }
   return result
 }
@@ -624,7 +655,7 @@ The single most important behaviour here is **what happens when the server ignor
 Two more failure modes get the same care:
 
 - **An interrupted transfer must not be misclassified as corruption.** A server can close the connection cleanly after sending fewer bytes than the model's full size (most concretely: no `Content-Length`, chunked encoding, and the chunked terminator sent early). `pipeline` then resolves without ever throwing. If we went straight to the digest check, a short-but-otherwise-fine partial would fail its hash and get deleted as `DOWNLOAD_CHECKSUM_MISMATCH` — destroying the exact resumable partial the whole `.part` mechanism exists to keep. Byte count is checked before the digest so a short transfer is reported as `DOWNLOAD_NETWORK_ERROR` and `.part` survives; only a full-length body that still fails its hash is genuine corruption.
-- **The only network requests this app makes are model downloads, and only ever to the pinned catalog host.** `downloadModel` validates `entry.url` against an allow-list before fetching anything, so a catalog entry pointed somewhere else — plausible as a malicious pull request in a public repo — is refused rather than silently fetched.
+- **The only network requests this app makes are model downloads, and only ever to the pinned catalog URL prefix.** `downloadModel` validates `entry.url` against that full prefix — not just the hostname — before fetching anything, so a catalog entry pointed at a different repo on the same host (e.g. `huggingface.co/attacker/repo/...`) is refused just as surely as one pointed at a different host entirely. This is what makes a malicious catalog pull request ineffective, which is the whole point of the check.
 
 **Files:**
 - Create: `test/helpers/model-server.ts`
@@ -633,7 +664,7 @@ Two more failure modes get the same care:
 
 **Interfaces:**
 - Consumes: `ModelEntry` from `catalog.ts`; `AppError` from `src/shared/errors.ts`.
-- Produces: `DownloadProgress`, `DownloadOptions` (including `allowedHosts`), `downloadModel(opts)`.
+- Produces: `DownloadProgress`, `DownloadOptions` (including the test-only `trustedUrlPrefixesForTests` seam), `downloadModel(opts)`.
 - Test helper produces: `startModelServer(opts)` returning `{ url, close, requests }`.
 
 - [ ] **Step 1: Create the misbehaving test server**
@@ -811,13 +842,12 @@ function entryFor(url: string, overrides: Partial<ModelEntry> = {}): ModelEntry 
   }
 }
 
-// downloadModel's default trust boundary only allows huggingface.co; every
-// test that actually needs to talk to the local test server opts into that
-// host explicitly rather than relying on the real default.
-const LOCAL_HOSTS = ['127.0.0.1']
-
+// downloadModel's default trust boundary only allows the pinned HuggingFace
+// URL prefix; every test that actually needs to talk to the local test
+// server opts in explicitly via trustedUrlPrefixesForTests, scoped to that
+// server's own URL, rather than relying on the real default.
 function download(opts: Parameters<typeof downloadModel>[0]) {
-  return downloadModel({ allowedHosts: LOCAL_HOSTS, ...opts })
+  return downloadModel({ trustedUrlPrefixesForTests: [opts.entry.url], ...opts })
 }
 
 beforeEach(async () => {
@@ -892,6 +922,34 @@ describe('downloadModel', () => {
     await download({ entry: entryFor(server.url), destPath: dest })
 
     expect(await readFile(dest)).toEqual(BODY)
+  })
+
+  it('promotes an already-complete, correctly-hashed .part file with zero HTTP requests', async () => {
+    // Simulates every byte having landed before a crash on the last run,
+    // before the final rename happened. Resuming with Range: bytes=<size>-
+    // against a real server would 416 here, so this must short-circuit
+    // before any fetch at all — the request list is the only proof of that.
+    server = await startModelServer(BODY)
+    const dest = join(dir, 'model.bin')
+    await writeFile(`${dest}.part`, BODY)
+
+    await download({ entry: entryFor(server.url), destPath: dest })
+
+    expect(await readFile(dest)).toEqual(BODY)
+    expect(server.requests).toEqual([])
+  })
+
+  it('discards an already-complete but corrupt .part file and re-downloads to a correct result', async () => {
+    server = await startModelServer(BODY)
+    const dest = join(dir, 'model.bin')
+    await writeFile(`${dest}.part`, Buffer.alloc(BODY.length, 0xff))
+
+    await download({ entry: entryFor(server.url), destPath: dest })
+
+    expect(await readFile(dest)).toEqual(BODY)
+    // One plain GET with no Range header: proof it restarted from zero
+    // rather than trying to resume a file it just decided was untrustworthy.
+    expect(server.requests).toEqual([''])
   })
 
   it('restarts from zero when the server echoes a Content-Range start that does not match the request', async () => {
@@ -1086,11 +1144,12 @@ describe('downloadModel', () => {
     })
   })
 
-  describe('the download host allow-list', () => {
+  describe('the download URL trust boundary', () => {
     // entry.url is the app's only network request, and the catalog is the
     // only place it comes from — but in a public repo, a catalog entry
-    // pointed somewhere else is a plausible malicious pull request. These
-    // checks must fire before any fetch happens.
+    // pointed somewhere else, or even at a different path on the trusted
+    // host, is a plausible malicious pull request. These checks must fire
+    // before any fetch happens.
 
     it('rejects a plain http URL before any fetch', async () => {
       const fetchImpl = vi.fn()
@@ -1120,12 +1179,26 @@ describe('downloadModel', () => {
       expect(fetchImpl).not.toHaveBeenCalled()
     })
 
-    it('defaults to allowing only huggingface.co, so the escape hatch cannot silently widen', async () => {
+    it('rejects a URL on the trusted host but a different repo path, which hostname-only checking would miss', async () => {
+      const fetchImpl = vi.fn()
+
+      await expect(
+        downloadModel({
+          entry: entryFor('https://huggingface.co/attacker/repo/resolve/main/ggml-tiny.bin'),
+          destPath: join(dir, 'model.bin'),
+          fetchImpl,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+
+      expect(fetchImpl).not.toHaveBeenCalled()
+    })
+
+    it('defaults to trusting only the pinned HuggingFace URL prefix, so the test seam cannot silently widen it', async () => {
       server = await startModelServer(BODY)
       const dest = join(dir, 'model.bin')
 
-      // No allowedHosts override: exercises the real default against the
-      // local server's non-huggingface host.
+      // No trustedUrlPrefixesForTests override: exercises the real default
+      // against the local server's non-HuggingFace URL.
       await expect(
         downloadModel({ entry: entryFor(server.url), destPath: dest }),
       ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
@@ -1151,18 +1224,20 @@ import { dirname } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { AppError } from '../../shared/errors.js'
-import type { ModelEntry } from './catalog.js'
+import { MODEL_URL_PREFIX, type ModelEntry } from './catalog.js'
 
 /** Refuse a download that would leave the disk this close to full. */
 const HEADROOM_BYTES = 64 * 1024 * 1024
 
 /**
  * Trust boundary: the app's only network requests are model downloads, and
- * those only ever go to the pinned HuggingFace host. A catalog entry
- * pointing anywhere else — plausible as a malicious pull request in a public
- * repo — is refused before a single byte is fetched.
+ * those only ever go to the pinned HuggingFace catalog prefix — not just the
+ * host, since a catalog entry pointed at a different repo on the same host
+ * would pass a hostname-only check while still serving arbitrary bytes. A
+ * catalog entry pointing anywhere else — plausible as a malicious pull
+ * request in a public repo — is refused before a single byte is fetched.
  */
-const DEFAULT_ALLOWED_HOSTS: readonly string[] = ['huggingface.co']
+const DEFAULT_TRUSTED_PREFIXES: readonly string[] = [MODEL_URL_PREFIX]
 
 export type DownloadProgress = {
   id: ModelEntry['id']
@@ -1179,9 +1254,14 @@ export type DownloadOptions = {
   fetchImpl?: typeof fetch
   freeBytesImpl?: (dir: string) => Promise<number>
   now?: () => number
-  /** Hosts trusted as a download source. Defaults to HuggingFace only; tests
-   * override this to point at a local server. */
-  allowedHosts?: string[]
+  /**
+   * Test seam only: additional URL prefixes trusted as a download source,
+   * checked in place of the default pinned HuggingFace prefix. Production
+   * callers must never set this — `createModelStore`'s `install` builds its
+   * own `DownloadOptions` and does not forward it, so IPC cannot reach it
+   * even by accident. Exists so tests can point at a local server.
+   */
+  trustedUrlPrefixesForTests?: string[]
 }
 
 async function freeBytesOn(dir: string): Promise<number> {
@@ -1198,25 +1278,20 @@ async function partialSize(path: string): Promise<number> {
   }
 }
 
-function isLoopbackHost(hostname: string): boolean {
-  return hostname === '127.0.0.1' || hostname === '::1' || hostname === 'localhost'
-}
-
 /**
- * A host in `allowedHosts` is trusted over https. Loopback hosts are also
- * trusted over plain http, since the only thing that ever names one is a
- * local test server — never a value that came from the catalog.
+ * The URL must start with one of the trusted prefixes in full — not just
+ * share a hostname — so `https://huggingface.co/attacker/repo/resolve/main/…`
+ * is refused exactly like a URL on a different host entirely. Hostname-only
+ * checking would let a malicious catalog entry pass this check while still
+ * serving arbitrary bytes, which defeats the entire purpose of having it.
  */
-function assertTrustedSource(url: string, allowedHosts: readonly string[]): void {
-  const { protocol, hostname } = new URL(url)
-  const trusted = allowedHosts.includes(hostname) && (protocol === 'https:' || isLoopbackHost(hostname))
-  if (!trusted) {
-    throw new AppError(
-      'DOWNLOAD_NETWORK_ERROR',
-      `Refused to download from untrusted source: ${protocol}//${hostname}`,
-      `url=${url} allowedHosts=${allowedHosts.join(', ')}`,
-    )
-  }
+function assertTrustedSource(url: string, trustedPrefixes: readonly string[]): void {
+  if (trustedPrefixes.some((prefix) => url.startsWith(prefix))) return
+  throw new AppError(
+    'DOWNLOAD_NETWORK_ERROR',
+    'Refused to download from an untrusted source.',
+    `url=${url} trustedPrefixes=${trustedPrefixes.join(', ')}`,
+  )
 }
 
 export async function downloadModel(options: DownloadOptions): Promise<void> {
@@ -1228,16 +1303,34 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     fetchImpl = fetch,
     freeBytesImpl = freeBytesOn,
     now = Date.now,
-    allowedHosts = DEFAULT_ALLOWED_HOSTS,
+    trustedUrlPrefixesForTests,
   } = options
 
   if (signal?.aborted) throw new Error('downloadModel: aborted before starting')
-  assertTrustedSource(entry.url, allowedHosts)
+  assertTrustedSource(entry.url, trustedUrlPrefixesForTests ?? DEFAULT_TRUSTED_PREFIXES)
 
   const partPath = `${destPath}.part`
 
   let resumeFrom = await partialSize(partPath)
   if (resumeFrom > entry.bytes) {
+    await rm(partPath, { force: true })
+    resumeFrom = 0
+  }
+
+  // Every byte may already have landed on a previous run that crashed before
+  // the final rename. Resuming that with Range: bytes=<size>- would ask a
+  // real server for zero remaining bytes, which commonly comes back as 416
+  // or an empty body — so this is handled explicitly, before any fetch.
+  if (resumeFrom > 0 && resumeFrom === entry.bytes) {
+    const existingHash = createHash('sha256')
+    await pipeline(createReadStream(partPath), async function* (source) {
+      for await (const chunk of source) existingHash.update(chunk as Buffer)
+    })
+    if (existingHash.digest('hex') === entry.sha256) {
+      await rename(partPath, destPath)
+      return
+    }
+    // Complete but corrupt: not resumable, so start over from zero.
     await rm(partPath, { force: true })
     resumeFrom = 0
   }
@@ -1402,7 +1495,7 @@ Create `test/main/models/store.test.ts`:
 
 ```ts
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -1476,6 +1569,28 @@ describe('createModelStore', () => {
 
   it('succeeds when removing a model that is not there', async () => {
     await expect(createModelStore(dir).remove('large-v3')).resolves.toBeUndefined()
+  })
+
+  it('removes both the final file and a leftover .part, so cancelling then removing reclaims the space', async () => {
+    const store = createModelStore(dir)
+    await mkdir(join(dir, 'models'), { recursive: true })
+    await writeFile(store.pathFor('tiny'), Buffer.alloc(entryFor('tiny').bytes))
+    await writeFile(`${store.pathFor('tiny')}.part`, Buffer.alloc(10))
+
+    await store.remove('tiny')
+
+    await expect(stat(store.pathFor('tiny'))).rejects.toThrow()
+    await expect(stat(`${store.pathFor('tiny')}.part`)).rejects.toThrow()
+  })
+
+  it('never forwards a test-only trust seam to the downloader, since it builds DownloadOptions itself', async () => {
+    const download = vi.fn(async (_options: unknown) => {})
+    const store = createModelStore(dir, download)
+
+    await store.install('tiny')
+
+    const options = download.mock.calls[0]![0] as Record<string, unknown>
+    expect(Object.keys(options).sort()).toEqual(['destPath', 'entry', 'onProgress', 'signal'])
   })
 
   it('creates the models directory and delegates to the downloader on install', async () => {
@@ -1636,8 +1751,11 @@ export function createModelStore(
     return checked.filter((id): id is ModelId => id !== null)
   }
 
+  /** Deletes the model file and any leftover `.part`, so cancelling a
+   * download and then removing it actually reclaims the space. */
   async function remove(id: ModelId): Promise<void> {
     await rm(pathFor(id), { force: true })
+    await rm(`${pathFor(id)}.part`, { force: true })
   }
 
   async function install(id: ModelId, options: InstallOptions = {}): Promise<void> {
@@ -1679,11 +1797,16 @@ git commit -m "feat: add on-disk model store"
 
 - `npm test` passes with no network access.
 - `npm run typecheck` is clean.
-- No module under `src/main/` imports `electron`.
+- No module under `src/main/` imports `electron`. Verify with:
+  ```
+  grep -rn "from 'electron'" src/main --include='*.ts' | grep -v '^src/main/ipc/' || echo "clean"
+  ```
 - A download interrupted mid-flight resumes; one that returns wrong bytes is rejected and cleaned up; one whose server ignores `Range` restarts rather than corrupting.
 - A clean-but-short transfer (server closes without sending the full declared size) is reported as `DOWNLOAD_NETWORK_ERROR` with `.part` kept, never as `DOWNLOAD_CHECKSUM_MISMATCH` — an interrupted download must stay resumable, not get treated as corrupt.
 - Aborting a download genuinely in flight (not just before the first byte) rejects with a plain `Error` whose message contains "aborted", distinguishable from `AppError('DOWNLOAD_NETWORK_ERROR')`, and a later attempt resumes from the surviving `.part` to a correct file.
-- `downloadModel` refuses any `entry.url` that isn't `https://huggingface.co/...` before fetching anything; the default `allowedHosts` is HuggingFace-only.
+- `downloadModel` refuses any `entry.url` that doesn't start with the pinned `MODEL_URL_PREFIX` before fetching anything — a same-host, different-path URL included, not just a different host — and the default `trustedUrlPrefixesForTests` is unset, so only that pinned prefix is ever trusted in production.
+- A `.part` file already equal to the catalog's `bytes` is hashed and promoted with zero HTTP requests when it matches, and discarded and re-downloaded from zero when it doesn't.
+- `remove(id)` deletes both the final file and any leftover `.part`, so cancelling a download and removing it actually reclaims the space.
 - `store.verify` gives a full-hash answer `isInstalled`'s size check cannot, and `install({ force: true })` re-downloads a model that already looks installed.
 - Corrupt settings do not prevent startup, and malformed fields in an otherwise-valid `settings.json` (e.g. an unknown `activeModel`) fall back to defaults field-by-field rather than propagating bad values or discarding the whole file.
 
