@@ -518,7 +518,9 @@ describe('toSrt', () => {
     const output = toSrt(segments)
     expect(output).toContain('1\n00:00:00,000 --> 00:00:01,000\nOne.')
     expect(output).toContain('2\n00:00:02,000 --> 00:00:03,000\nTwo.')
-    expect(output).not.toContain('3')
+    // No third cue number. Matched line-anchored: a bare `'3'` check would also
+    // hit the `3` inside the 00:00:03,000 timestamp above.
+    expect(output).not.toMatch(/^3$/m)
   })
 
   it('uses commas before milliseconds', () => {
