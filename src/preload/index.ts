@@ -12,7 +12,16 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
 }
 
 function subscribe<T>(channel: string, callback: (payload: T) => void): Unsubscribe {
-  const listener = (_event: IpcRendererEvent, payload: T): void => callback(payload)
+  const listener = (_event: IpcRendererEvent, payload: T): void => {
+    try {
+      callback(payload)
+    } catch {
+      // A broken renderer subscriber must not stop delivery to the other
+      // subscribers on this channel. This is main -> renderer delivery, so it
+      // doesn't conflict with "errors travel as data, never thrown across the
+      // bridge" above — that rule governs the opposite direction.
+    }
+  }
   ipcRenderer.on(channel, listener)
   return () => {
     ipcRenderer.off(channel, listener)

@@ -17,5 +17,5 @@
     // tsconfig.web.json` fail on `import ... from 'electron'` itself.
     "types": ["node"]
   },
-  "include": ["src/renderer", "src/preload", "src/shared", "test/renderer"]
+  "include": ["src/renderer", "src/preload", "src/shared", "test/renderer", "test/preload"]
 }
