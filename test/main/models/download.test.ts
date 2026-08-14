@@ -401,6 +401,114 @@ describe('downloadModel', () => {
     })
   })
 
+  describe('watchdog timeouts', () => {
+    // These are the "timeout" side of the caller-cancellation-vs-timeout
+    // distinction: a timeout is a network failure, not a user cancellation,
+    // so it must throw a coded AppError — never the plain "aborted" Error
+    // the 'aborting mid-stream' tests above assert for real cancellation.
+    // Both timeouts are given short, injected values so nothing here sleeps
+    // for tens of real seconds.
+
+    it('rejects with DOWNLOAD_NETWORK_ERROR, not a plain aborted Error, when the body goes quiet without closing the socket', async () => {
+      server = await startModelServer(BODY, { kind: 'stall', afterBytes: 12 })
+      const dest = join(dir, 'model.bin')
+
+      let error: unknown
+      try {
+        await download({ entry: entryFor(server.url), destPath: dest, idleTimeoutMs: 40 })
+      } catch (caught) {
+        error = caught
+      }
+
+      expect(error).toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+      // The whole point: this must NOT look like the plain, code-less Error
+      // that caller cancellation throws — a stall is a network failure, and
+      // reporting it as a cancellation would tell the user the wrong thing.
+      expect((error as { code?: unknown }).code).toBe('DOWNLOAD_NETWORK_ERROR')
+    })
+
+    it('leaves the .part file behind after a stall, and a later attempt resumes to a byte-correct result', async () => {
+      server = await startModelServer(BODY, { kind: 'stall', afterBytes: 12 })
+      const dest = join(dir, 'model.bin')
+
+      await download({ entry: entryFor(server.url), destPath: dest, idleTimeoutMs: 40 }).catch(() => {})
+
+      const partSize = (await stat(`${dest}.part`)).size
+      expect(partSize).toBeGreaterThan(0)
+      expect(partSize).toBeLessThan(BODY.length)
+
+      // The stalled server never answers again, so resume against a fresh,
+      // healthy server — proving the .part file itself is intact and
+      // resumable, not just present.
+      await server.close()
+      server = await startModelServer(BODY)
+
+      await download({ entry: entryFor(server.url), destPath: dest })
+
+      expect(await readFile(dest)).toEqual(BODY)
+      expect(server.requests.at(-1)).toBe(`bytes=${partSize}-`)
+    })
+
+    it('rejects with DOWNLOAD_NETWORK_ERROR when no response arrives at all', async () => {
+      // A response that never arrives is a different failure point than a
+      // body that stalls mid-stream (covered above) — this exercises the
+      // response-timeout watchdog specifically, via a fetchImpl that only
+      // ever settles when its signal is aborted, exactly like a real fetch
+      // against a connection that accepted the request and went silent
+      // before sending headers.
+      const neverResponds: typeof fetch = ((_url: string, init?: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          })
+        })) as typeof fetch
+
+      const dest = join(dir, 'model.bin')
+
+      await expect(
+        downloadModel({
+          entry: entryFor('https://huggingface.co/never/responds/model.bin'),
+          trustedUrlPrefixesForTests: ['https://huggingface.co/never/responds/'],
+          destPath: dest,
+          fetchImpl: neverResponds,
+          responseTimeoutMs: 30,
+        }),
+      ).rejects.toMatchObject({ code: 'DOWNLOAD_NETWORK_ERROR' })
+    })
+
+    it('still throws the plain, code-less Error for real caller cancellation, proving the two paths stay distinguishable', async () => {
+      // Same scenario as the 'aborting mid-stream' tests above, just with
+      // short watchdog timeouts also configured — proving caller
+      // cancellation wins over the watchdogs rather than racing them into
+      // the wrong error shape.
+      server = await startModelServer(BODY, { kind: 'slow', chunkDelayMs: 25 })
+      const dest = join(dir, 'model.bin')
+      const controller = new AbortController()
+      let progressCount = 0
+
+      let error: unknown
+      try {
+        await download({
+          entry: entryFor(server.url),
+          destPath: dest,
+          signal: controller.signal,
+          idleTimeoutMs: 5_000,
+          responseTimeoutMs: 5_000,
+          onProgress: () => {
+            progressCount += 1
+            if (progressCount === 2) controller.abort()
+          },
+        })
+      } catch (caught) {
+        error = caught
+      }
+
+      expect(error).toBeInstanceOf(Error)
+      expect((error as Error).message).toMatch(/abort/i)
+      expect((error as { code?: unknown }).code).toBeUndefined()
+    })
+  })
+
   describe('the download URL trust boundary', () => {
     // entry.url is the app's only network request, and the catalog is the
     // only place it comes from — but in a public repo, a catalog entry

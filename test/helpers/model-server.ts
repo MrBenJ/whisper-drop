@@ -28,6 +28,13 @@ export type ServerBehaviour =
    * Content-Length covering all of them — models a misbehaving server that
    * keeps writing past what the catalog trusts as the file's true size. */
   | { kind: 'overlong'; extraBytes: number }
+  /** Write response headers and some bytes, then go silent forever — never
+   * calling `res.end()` or destroying the socket. This is distinct from
+   * 'truncate' (which resets the connection): a proxy or flaky link that
+   * simply stops delivering bytes without closing anything leaves the
+   * client's promise waiting on a socket that looks perfectly alive. Only an
+   * idle-timeout watchdog on the client side can catch this. */
+  | { kind: 'stall'; afterBytes: number }
 
 export type ModelServer = {
   url: string
@@ -73,6 +80,19 @@ export async function startModelServer(
       // test about a connection dropping mid-transfer. The delay lets the
       // headers and first bytes land before the reset.
       setTimeout(() => res.destroy(), 20)
+      return
+    }
+
+    if (behaviour.kind === 'stall') {
+      // Swallow the eventual write-after-abort error when the client's
+      // watchdog gives up and tears down the connection from its end — the
+      // server deliberately never does so itself.
+      res.on('error', () => {})
+      res.writeHead(200, { 'content-length': String(payload.length) })
+      res.write(payload.subarray(0, behaviour.afterBytes))
+      // Deliberately no res.end() and no res.destroy(): the socket stays
+      // open and headers/bytes already sent stand, but nothing more ever
+      // arrives — the exact condition 'truncate' does not reproduce.
       return
     }
 

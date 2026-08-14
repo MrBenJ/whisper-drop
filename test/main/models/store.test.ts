@@ -188,6 +188,27 @@ describe('createModelStore', () => {
       expect(download).toHaveBeenCalledTimes(2)
     })
 
+    it('clears the in-flight entry after a failed install, so a later install starts a fresh attempt instead of rejoining the stale rejection', async () => {
+      // install()'s cleanup runs in a try/finally, which structurally
+      // guarantees the map entry is deleted whether the awaited promise
+      // resolves or rejects — but that guarantee was previously untested. If
+      // the finally were ever lost, this would fail closed: the second
+      // install() would return the same already-rejected promise from the
+      // map (rejecting again with 'first attempt failed' and never calling
+      // download a second time) rather than starting over — exactly the
+      // "can't be retried" half of the bug this store.ts change exists to
+      // prevent.
+      const download = vi
+        .fn(async () => {})
+        .mockRejectedValueOnce(new Error('first attempt failed'))
+      const store = createModelStore(dir, download)
+
+      await expect(store.install('tiny')).rejects.toThrow('first attempt failed')
+      await expect(store.install('tiny')).resolves.toBeUndefined()
+
+      expect(download).toHaveBeenCalledTimes(2)
+    })
+
     it('waits for an in-flight install before removing, so remove never races the final rename and never surfaces a raw fs error', async () => {
       // A fake downloader that writes a .part file and then, once released,
       // renames it into place — modelling the real downloadModel's shape

@@ -36,6 +36,20 @@ export type DownloadOptions = {
   freeBytesImpl?: (dir: string) => Promise<number>
   now?: () => number
   /**
+   * How long to wait for a response (headers) after the request goes out
+   * before treating the connection as dead. A caller that accepts the
+   * request and then never replies would otherwise hang this promise
+   * forever. Not a total-duration cap — see `idleTimeoutMs`.
+   */
+  responseTimeoutMs?: number
+  /**
+   * How long to wait, once the body is streaming, without receiving any
+   * bytes before treating the transfer as stalled. Reset on every chunk, so
+   * a slow-but-steady multi-gigabyte download is never penalized — only a
+   * connection that stops delivering bytes without closing the socket is.
+   */
+  idleTimeoutMs?: number
+  /**
    * Test seam only: when set, replaces the default trusted prefix entirely
    * (not additive) so tests can point at a local server. Production callers
    * must never set this — `createModelStore`'s `install` builds its own
@@ -44,6 +58,12 @@ export type DownloadOptions = {
    */
   trustedUrlPrefixesForTests?: string[]
 }
+
+/** No response within this long means the connection is dead, not just slow. */
+const DEFAULT_RESPONSE_TIMEOUT_MS = 30_000
+/** No new bytes within this long, once streaming has started, means the
+ * transfer stalled. Reset on every chunk — never a total-duration cap. */
+const DEFAULT_IDLE_TIMEOUT_MS = 60_000
 
 async function freeBytesOn(dir: string): Promise<number> {
   const fs = await statfs(dir)
@@ -113,6 +133,8 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     fetchImpl = fetch,
     freeBytesImpl = freeBytesOn,
     now = Date.now,
+    responseTimeoutMs = DEFAULT_RESPONSE_TIMEOUT_MS,
+    idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS,
     trustedUrlPrefixesForTests,
   } = options
 
@@ -154,109 +176,182 @@ export async function downloadModel(options: DownloadOptions): Promise<void> {
     )
   }
 
-  let response: Response
-  try {
-    response = await fetchImpl(entry.url, {
-      headers: resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {},
-      signal,
-    })
-  } catch (cause) {
-    if (signal?.aborted) throw new Error('downloadModel: aborted')
-    throw new AppError(
-      'DOWNLOAD_NETWORK_ERROR',
-      "Couldn't reach the model server.",
-      String(cause),
-    )
+  // Compose an internal watchdog controller with the caller's signal: caller
+  // cancellation still aborts exactly as before, but a response that never
+  // arrives or a body that stops delivering bytes without closing the socket
+  // also gets aborted here, rather than hanging this promise forever (see
+  // the finding this is fixing — an in-flight install map joins every later
+  // install to a hung promise, and remove() awaits it before deleting).
+  //
+  // `timeoutKind` records *why* the internal controller tripped, so a
+  // timeout can be told apart from a caller cancellation after the fact:
+  // cancellation must keep throwing the plain "aborted" Error the rest of
+  // the app matches on, while a timeout is a network failure and must throw
+  // an AppError instead — surfacing a stall as a plain cancellation would
+  // make it look to the UI exactly like the user pressed Cancel.
+  const internalController = new AbortController()
+  let timeoutKind: 'response' | 'idle' | undefined
+  const forwardCallerAbort = () => internalController.abort()
+  signal?.addEventListener('abort', forwardCallerAbort)
+
+  let responseTimer: ReturnType<typeof setTimeout> | undefined
+  let idleTimer: ReturnType<typeof setTimeout> | undefined
+
+  const clearResponseTimer = () => {
+    if (responseTimer !== undefined) clearTimeout(responseTimer)
+    responseTimer = undefined
+  }
+  const clearIdleTimer = () => {
+    if (idleTimer !== undefined) clearTimeout(idleTimer)
+    idleTimer = undefined
+  }
+  const armIdleTimer = () => {
+    clearIdleTimer()
+    idleTimer = setTimeout(() => {
+      timeoutKind = 'idle'
+      internalController.abort()
+    }, idleTimeoutMs)
   }
 
-  if (!response.ok || !response.body) {
-    await response.body?.cancel().catch(() => {})
-    throw new AppError(
-      'DOWNLOAD_NETWORK_ERROR',
-      "Couldn't reach the model server.",
-      `HTTP ${response.status}`,
-    )
-  }
-
-  // A 200 to a ranged request means the server ignored the header and is
-  // sending the whole body. Appending it to the partial would silently produce
-  // a corrupt file of the wrong length, so start over instead.
-  let append = resumeFrom > 0 && response.status === 206
-  if (resumeFrom > 0 && !append) {
-    await rm(partPath, { force: true })
-    resumeFrom = 0
-  }
-
-  if (append) {
-    const contentRange = response.headers.get('content-range')
-    const match = contentRange ? /bytes (\d+)-\d+\/(\d+)/.exec(contentRange) : null
-    const start = match ? Number(match[1]) : undefined
-    const total = match ? Number(match[2]) : undefined
-    if (start !== resumeFrom || total !== entry.bytes) {
-      // Missing, mismatched, or claiming a different total than the catalog
-      // trusts — any of these means we can't trust which bytes this response
-      // actually holds. Discard the partial rather than risk splicing bytes
-      // in at the wrong position — the next attempt starts clean.
-      await response.body?.cancel().catch(() => {})
-      await rm(partPath, { force: true })
-      throw new AppError(
+  /** Picks the right error for a fetch/pipeline failure: caller cancellation
+   * keeps today's plain, code-less Error; a watchdog timeout is a network
+   * failure and gets a coded AppError naming which timeout tripped; anything
+   * else falls back to the generic network-error message it always had. */
+  function toDownloadError(genericMessage: string, genericDetail: string): Error {
+    if (signal?.aborted) return new Error('downloadModel: aborted')
+    if (timeoutKind) {
+      const timeoutMs = timeoutKind === 'response' ? responseTimeoutMs : idleTimeoutMs
+      return new AppError(
         'DOWNLOAD_NETWORK_ERROR',
-        'The model server returned an unexpected byte range.',
-        `requested ${resumeFrom}, got ${contentRange ?? '(missing)'}`,
+        'The download stalled and was cancelled automatically.',
+        `${timeoutKind} timeout: no ${timeoutKind === 'response' ? 'response' : 'data'} received for ${timeoutMs}ms`,
       )
     }
+    return new AppError('DOWNLOAD_NETWORK_ERROR', genericMessage, genericDetail)
   }
 
+  let response: Response
+  // Placeholder until `resumeFrom` reaches its final value below — a 200 to
+  // a ranged request resets `resumeFrom` to 0 after this point, and
+  // `received` must track that reset, not the pre-request guess.
+  let received = 0
   const hash = createHash('sha256')
-  if (append) {
-    await pipeline(createReadStream(partPath), async function* (source) {
-      for await (const chunk of source) hash.update(chunk as Buffer)
-    })
-  }
+  try {
+    try {
+      responseTimer = setTimeout(() => {
+        timeoutKind = 'response'
+        internalController.abort()
+      }, responseTimeoutMs)
 
-  let received = resumeFrom
-  const startedAt = now()
-
-  const meter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      received += chunk.length
-      // entry.bytes is the trusted quantity; the response stream is not. A
-      // server or intermediary that keeps sending past it would otherwise
-      // write unbounded data to disk after the space precheck already
-      // passed — so this is rejected rather than written through.
-      if (received > entry.bytes) {
-        callback(new Error(`received more bytes than expected (${received} > ${entry.bytes})`))
-        return
+      try {
+        response = await fetchImpl(entry.url, {
+          headers: resumeFrom > 0 ? { Range: `bytes=${resumeFrom}-` } : {},
+          signal: internalController.signal,
+        })
+      } catch (cause) {
+        throw toDownloadError("Couldn't reach the model server.", String(cause))
+      } finally {
+        clearResponseTimer()
       }
 
-      hash.update(chunk)
+      if (!response.ok || !response.body) {
+        await response.body?.cancel().catch(() => {})
+        throw new AppError(
+          'DOWNLOAD_NETWORK_ERROR',
+          "Couldn't reach the model server.",
+          `HTTP ${response.status}`,
+        )
+      }
 
-      const elapsed = Math.max(1, now() - startedAt)
-      onProgress?.({
-        id: entry.id,
-        receivedBytes: received,
-        totalBytes: entry.bytes,
-        bytesPerSecond: ((received - resumeFrom) / elapsed) * 1000,
+      // A 200 to a ranged request means the server ignored the header and is
+      // sending the whole body. Appending it to the partial would silently produce
+      // a corrupt file of the wrong length, so start over instead.
+      let append = resumeFrom > 0 && response.status === 206
+      if (resumeFrom > 0 && !append) {
+        await rm(partPath, { force: true })
+        resumeFrom = 0
+      }
+
+      if (append) {
+        const contentRange = response.headers.get('content-range')
+        const match = contentRange ? /bytes (\d+)-\d+\/(\d+)/.exec(contentRange) : null
+        const start = match ? Number(match[1]) : undefined
+        const total = match ? Number(match[2]) : undefined
+        if (start !== resumeFrom || total !== entry.bytes) {
+          // Missing, mismatched, or claiming a different total than the catalog
+          // trusts — any of these means we can't trust which bytes this response
+          // actually holds. Discard the partial rather than risk splicing bytes
+          // in at the wrong position — the next attempt starts clean.
+          await response.body?.cancel().catch(() => {})
+          await rm(partPath, { force: true })
+          throw new AppError(
+            'DOWNLOAD_NETWORK_ERROR',
+            'The model server returned an unexpected byte range.',
+            `requested ${resumeFrom}, got ${contentRange ?? '(missing)'}`,
+          )
+        }
+      }
+
+      if (append) {
+        await pipeline(createReadStream(partPath), async function* (source) {
+          for await (const chunk of source) hash.update(chunk as Buffer)
+        })
+      }
+
+      received = resumeFrom
+      const startedAt = now()
+
+      const meter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          // Streaming bytes proves the connection is alive, so every chunk
+          // resets the idle watchdog — a slow-but-steady multi-gigabyte
+          // download never trips it, only a transfer that goes quiet does.
+          armIdleTimer()
+          received += chunk.length
+          // entry.bytes is the trusted quantity; the response stream is not. A
+          // server or intermediary that keeps sending past it would otherwise
+          // write unbounded data to disk after the space precheck already
+          // passed — so this is rejected rather than written through.
+          if (received > entry.bytes) {
+            callback(new Error(`received more bytes than expected (${received} > ${entry.bytes})`))
+            return
+          }
+
+          hash.update(chunk)
+
+          const elapsed = Math.max(1, now() - startedAt)
+          onProgress?.({
+            id: entry.id,
+            receivedBytes: received,
+            totalBytes: entry.bytes,
+            bytesPerSecond: ((received - resumeFrom) / elapsed) * 1000,
+          })
+
+          callback(null, chunk)
+        },
       })
 
-      callback(null, chunk)
-    },
-  })
-
-  try {
-    await pipeline(
-      Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
-      meter,
-      createWriteStream(partPath, { flags: append ? 'a' : 'w' }),
-    )
-  } catch (cause) {
-    if (signal?.aborted) throw new Error('downloadModel: aborted')
-    // Keep the .part file: a later attempt resumes from it.
-    throw new AppError(
-      'DOWNLOAD_NETWORK_ERROR',
-      'The download was interrupted.',
-      String(cause),
-    )
+      try {
+        armIdleTimer()
+        await pipeline(
+          Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+          meter,
+          createWriteStream(partPath, { flags: append ? 'a' : 'w' }),
+          { signal: internalController.signal },
+        )
+      } catch (cause) {
+        // Keep the .part file either way: a later attempt resumes from it,
+        // and a stall is exactly when resume matters most.
+        throw toDownloadError('The download was interrupted.', String(cause))
+      } finally {
+        clearIdleTimer()
+      }
+    } finally {
+      clearResponseTimer()
+      clearIdleTimer()
+    }
+  } finally {
+    signal?.removeEventListener('abort', forwardCallerAbort)
   }
 
   // A clean end short of the expected length is an interrupted transfer, not
