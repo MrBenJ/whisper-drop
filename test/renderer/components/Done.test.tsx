@@ -21,7 +21,7 @@ function job(segments: Segment[] = [], patch: Partial<JobState> = {}): JobState 
 }
 
 function handlers() {
-  return { onSave: vi.fn(), onCopy: vi.fn(async () => {}), onReset: vi.fn() }
+  return { onSave: vi.fn(async () => {}), onCopy: vi.fn(async () => {}), onReset: vi.fn() }
 }
 
 describe('Done', () => {
@@ -127,11 +127,78 @@ describe('Done', () => {
     const onCopy = vi.fn(async () => {
       throw new Error('denied')
     })
-    render(<Done job={job([segment({ text: 'copy me' })])} onSave={vi.fn()} onCopy={onCopy} onReset={vi.fn()} />)
+    render(
+      <Done
+        job={job([segment({ text: 'copy me' })])}
+        onSave={vi.fn(async () => {})}
+        onCopy={onCopy}
+        onReset={vi.fn()}
+      />,
+    )
 
     fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
 
     await waitFor(() => expect(screen.getByText("Couldn't copy")).toBeTruthy())
+  })
+
+  // C1: a failed save must never cost the user the finished transcript. This
+  // is asserted here at the unit level; test/renderer/App.test.tsx asserts
+  // the same thing end to end through the real App and reducer.
+  it('a rejected save shows an inline error, keeps the transcript on screen, and leaves every Save button usable', async () => {
+    const onSave = vi.fn(async () => {
+      throw Object.assign(new Error('EROFS'), { code: 'EROFS' })
+    })
+    render(
+      <Done
+        job={job([segment({ text: 'still here' })])}
+        onSave={onSave}
+        onCopy={vi.fn(async () => {})}
+        onReset={vi.fn()}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save .srt' }))
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+
+    // The transcript is still rendered — this is not the app-level error view.
+    expect(screen.getByTestId('transcript').textContent).toContain('still here')
+    // Every Save button is still there, and still enabled.
+    for (const name of ['Save .txt', 'Save .srt', 'Save .vtt']) {
+      const button = screen.getByRole('button', { name }) as HTMLButtonElement
+      expect(button.disabled).toBe(false)
+    }
+  })
+
+  it('dismissing the inline save error clears it without touching the transcript', async () => {
+    const onSave = vi.fn(async () => {
+      throw new Error('boom')
+    })
+    render(<Done job={job([segment({ text: 'still here' })])} onSave={onSave} onCopy={vi.fn(async () => {})} onReset={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save .srt' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.getByTestId('transcript').textContent).toContain('still here')
+  })
+
+  it('a save that succeeds after a prior failure clears the error and calls onSave again', async () => {
+    let attempt = 0
+    const onSave = vi.fn(async () => {
+      attempt += 1
+      if (attempt === 1) throw new Error('first attempt fails')
+    })
+    render(<Done job={job([segment({ text: 'still here' })])} onSave={onSave} onCopy={vi.fn(async () => {})} onReset={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save .srt' }))
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save .srt' }))
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 
   it('"Transcribe another" calls onReset', () => {

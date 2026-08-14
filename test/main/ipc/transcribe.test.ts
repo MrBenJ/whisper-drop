@@ -79,6 +79,7 @@ function harness(overrides: Partial<Parameters<typeof createTranscribeHandlers>[
     // the trust-boundary tests below override this explicitly.
     hasTrustedPath: () => true,
     consumeTrustedPath: () => {},
+    issueTrustedPath: () => {},
     ...overrides,
   })
 
@@ -163,6 +164,68 @@ describe('transcribe.start', () => {
     settings = SETTINGS
     await expect(handlers.start('/a.wav')).resolves.toBe('job-1')
     expect(created).toHaveLength(1)
+  })
+
+  it('re-issues the trusted path when the job it started ends in failure, so a retry is legitimate (I2)', async () => {
+    const trusted = new Set(['/a.wav'])
+    const hasTrustedPath = vi.fn((path: string) => trusted.has(path))
+    const consumeTrustedPath = vi.fn((path: string) => {
+      trusted.delete(path)
+    })
+    const issueTrustedPath = vi.fn((path: string) => {
+      trusted.add(path)
+    })
+    const { handlers, created } = harness({ hasTrustedPath, consumeTrustedPath, issueTrustedPath })
+
+    await handlers.start('/a.wav')
+    expect(trusted.has('/a.wav')).toBe(false) // spent by the successful start
+
+    created[0]?.emit({ phase: 'failed', error: { code: 'WHISPER_FAILED', message: 'boom' } })
+
+    expect(issueTrustedPath).toHaveBeenCalledWith('/a.wav')
+    expect(trusted.has('/a.wav')).toBe(true) // re-issued, not left spent
+
+    // The identical path, never re-selected through the dialog or a drop,
+    // is now legitimately usable again.
+    await expect(handlers.start('/a.wav')).resolves.toBe('job-2')
+    expect(created).toHaveLength(2)
+  })
+
+  it('does not re-issue the trusted path when the job is cancelled rather than failed', async () => {
+    const trusted = new Set(['/a.wav'])
+    const hasTrustedPath = vi.fn((path: string) => trusted.has(path))
+    const consumeTrustedPath = vi.fn((path: string) => {
+      trusted.delete(path)
+    })
+    const issueTrustedPath = vi.fn((path: string) => {
+      trusted.add(path)
+    })
+    const { handlers, created } = harness({ hasTrustedPath, consumeTrustedPath, issueTrustedPath })
+
+    const id = await handlers.start('/a.wav')
+    await handlers.cancel(id)
+
+    expect(issueTrustedPath).not.toHaveBeenCalled()
+    expect(trusted.has('/a.wav')).toBe(false)
+    expect(created).toHaveLength(1)
+  })
+
+  it('does not re-issue the trusted path when the job finishes successfully', async () => {
+    const trusted = new Set(['/a.wav'])
+    const hasTrustedPath = vi.fn((path: string) => trusted.has(path))
+    const consumeTrustedPath = vi.fn((path: string) => {
+      trusted.delete(path)
+    })
+    const issueTrustedPath = vi.fn((path: string) => {
+      trusted.add(path)
+    })
+    const { handlers, created } = harness({ hasTrustedPath, consumeTrustedPath, issueTrustedPath })
+
+    await handlers.start('/a.wav')
+    created[0]?.emit(done())
+
+    expect(issueTrustedPath).not.toHaveBeenCalled()
+    expect(trusted.has('/a.wav')).toBe(false)
   })
 
   it('resolves the model against the English-only toggle', async () => {

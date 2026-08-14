@@ -268,6 +268,27 @@ describe('TranscriptionJob', () => {
     expect(job.state.phase).toBe('done')
   })
 
+  it('cancel() actually aborts the signal handed to a port, not just the reported phase (I4)', async () => {
+    let capturedSignal: AbortSignal | undefined
+    let job!: TranscriptionJob
+    job = makeJob({
+      // Never resolves on its own — the only way out is the signal aborting,
+      // which is exactly what this proves cancel() causes.
+      probe: (_filePath: string, signal: AbortSignal) =>
+        new Promise<MediaInfo>((_resolve, reject) => {
+          capturedSignal = signal
+          signal.addEventListener('abort', () => reject(new Error('aborted')))
+        }),
+    })
+
+    const run = job.start()
+    job.cancel()
+    await run
+
+    expect(capturedSignal?.aborted).toBe(true)
+    expect(job.state.phase).toBe('cancelled')
+  })
+
   it('passes the abort signal through to the probe port', async () => {
     let capturedSignal: AbortSignal | undefined
     const job = makeJob({

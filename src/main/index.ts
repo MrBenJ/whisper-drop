@@ -49,6 +49,7 @@ async function setup(): Promise<void> {
     emitState: (state) => send(CHANNELS.transcribeState, state),
     hasTrustedPath: (path) => trustedPaths.has(path),
     consumeTrustedPath: (path) => trustedPaths.consume(path),
+    issueTrustedPath: (path) => trustedPaths.issue(path),
     createJob: (input) =>
       new TranscriptionJob(
         {

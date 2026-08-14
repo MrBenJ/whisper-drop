@@ -33,6 +33,17 @@ export type TranscribeDeps = {
   hasTrustedPath: (filePath: string) => boolean
   /** Spends the trust entry. Called only once `start` is committed to running. */
   consumeTrustedPath: (filePath: string) => void
+  /**
+   * Re-issues a trust entry `consumeTrustedPath` already spent. Called only
+   * when a job that got past every check ends in `failed` — the one terminal
+   * state whose UI still holds the file path and offers a Retry that reuses
+   * it (see `App.tsx`'s `retry`). `done` has nothing left to retry, and a
+   * `cancelled` job's path is deliberately left spent: the reducer nulls
+   * `state.job` on cancellation, so there is no retry path that could ever
+   * reuse it, and re-issuing anyway would just spend a `MAX_ISSUED` slot for
+   * no reachable benefit.
+   */
+  issueTrustedPath: (filePath: string) => void
 }
 
 export type TranscribeHandlers = {
@@ -136,6 +147,12 @@ export function createTranscribeHandlers(deps: TranscribeDeps): TranscribeHandle
         }
 
         if (isTerminal(state.phase) && activeId === id) activeId = null
+
+        // Re-issue the path consumeTrustedPath spent above, so a retry of a
+        // failed job is a legitimate request rather than one rejected on
+        // trust grounds it can never recover from. See issueTrustedPath's
+        // doc comment for why only `failed` does this.
+        if (state.phase === 'failed') deps.issueTrustedPath(path)
       })
 
       activeRun = job.start()

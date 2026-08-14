@@ -4,6 +4,27 @@ import type { Plugin } from 'vite'
 import { cspForBuild } from './src/shared/csp.js'
 
 /**
+ * Does the actual string surgery, split out from the plugin below so it can
+ * be unit-tested (`test/build/csp-injection.test.ts`) directly against the
+ * real `src/renderer/index.html` source — a whitespace or casing change to
+ * that file's `</head>` would otherwise make this replace silently no-op,
+ * shipping a CSP-less renderer behind a build that still exits 0. Throwing
+ * instead turns that into a build failure.
+ */
+export function injectCsp(html: string, policy: string): string {
+  if (!html.includes('</head>')) {
+    throw new Error(
+      "whisper-drop-csp: no '</head>' found in the renderer's index.html to inject the " +
+        'Content-Security-Policy meta tag before — refusing to ship a CSP-less renderer.',
+    )
+  }
+  return html.replace(
+    '</head>',
+    `  <meta http-equiv="Content-Security-Policy" content="${policy}">\n  </head>`,
+  )
+}
+
+/**
  * The CSP is injected here rather than hard-coded in index.html because dev
  * and production need different script-src rules and a meta tag cannot vary.
  */
@@ -13,11 +34,7 @@ function contentSecurityPolicy(): Plugin {
     transformIndexHtml: {
       order: 'pre',
       handler(html, context) {
-        const policy = cspForBuild(Boolean(context.server))
-        return html.replace(
-          '</head>',
-          `  <meta http-equiv="Content-Security-Policy" content="${policy}">\n  </head>`,
-        )
+        return injectCsp(html, cspForBuild(Boolean(context.server)))
       },
     },
   }

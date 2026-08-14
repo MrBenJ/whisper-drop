@@ -43,6 +43,10 @@ export function createMainWindow(options: WindowOptions): BrowserWindow {
   window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   )
+  // The request handler above governs the prompt; this governs `navigator.permissions.query`
+  // and similar synchronous checks, which bypass the request handler entirely. Without this,
+  // a compromised renderer could still learn whether a permission is already granted.
+  window.webContents.session.setPermissionCheckHandler(() => false)
 
   if (options.rendererUrl) void window.loadURL(options.rendererUrl)
   else void window.loadFile(options.rendererFile)

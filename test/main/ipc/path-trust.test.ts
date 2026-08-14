@@ -37,6 +37,7 @@ function harness() {
     emitState: () => {},
     hasTrustedPath: trustedPaths.has,
     consumeTrustedPath: trustedPaths.consume,
+    issueTrustedPath: trustedPaths.issue,
   })
 
   return { dialog, droppedFile, transcribe }
@@ -61,5 +62,55 @@ describe('the path trust boundary end to end', () => {
     await droppedFile.register('/videos/dropped.mp4')
 
     await expect(transcribe.start('/videos/dropped.mp4')).resolves.toEqual(expect.any(String))
+  })
+
+  // I2, end to end against the real registry: a job that fails must leave
+  // its path usable for a retry, not stranded behind the trust boundary this
+  // same suite exists to enforce.
+  it('a failed job leaves its path usable for a retry, through the real trust registry', async () => {
+    const { dialog, transcribe } = harness()
+    const path = await dialog.openFile()
+
+    const jobDeps: { fail: (() => void) | null } = { fail: null }
+    const trustedPaths = createTrustedPaths()
+    trustedPaths.issue(path as string)
+    const failingTranscribe = createTranscribeHandlers({
+      newJobId: () => 'job-1',
+      readSettings: async () => SETTINGS,
+      modelPathFor: () => '/models/base.bin',
+      isInstalled: async () => true,
+      createJob: (input) =>
+        ({
+          id: input.id,
+          state: { id: input.id, filePath: input.filePath, phase: 'probing', progress: 0, segments: [] },
+          start: () => new Promise<void>(() => {}),
+          cancel: () => {},
+          subscribe: (listener) => {
+            jobDeps.fail = () =>
+              listener({
+                id: input.id,
+                filePath: input.filePath,
+                phase: 'failed',
+                progress: 0.3,
+                segments: [],
+                error: { code: 'WHISPER_FAILED', message: 'boom' },
+              })
+            return () => {}
+          },
+        }) satisfies JobLike,
+      recordThroughput: async () => undefined,
+      emitState: () => {},
+      hasTrustedPath: trustedPaths.has,
+      consumeTrustedPath: trustedPaths.consume,
+      issueTrustedPath: trustedPaths.issue,
+    })
+
+    await failingTranscribe.start(path as string)
+    expect(trustedPaths.has(path as string)).toBe(false) // consumed by the successful start
+
+    jobDeps.fail?.()
+
+    expect(trustedPaths.has(path as string)).toBe(true) // re-issued on failure
+    await expect(failingTranscribe.start(path as string)).resolves.toEqual(expect.any(String))
   })
 })

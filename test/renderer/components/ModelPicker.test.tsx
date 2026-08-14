@@ -106,10 +106,26 @@ describe('ModelPicker', () => {
     expect(document.querySelector('.model-row-speed')).toBeNull()
   })
 
-  it('with englishOnly off, rows resolve to the multilingual ids and no partial-swap note appears', () => {
-    renderPicker(rowsFor(), handlers(), { settings: { ...DEFAULT_SETTINGS, englishOnly: false } })
+  it('with englishOnly off, rows resolve to the multilingual ids, show plain (non-.en) labels, and no partial-swap note appears', () => {
+    const rows: ModelRow[] = [
+      modelRow({
+        base: 'tiny',
+        resolved: {
+          id: 'tiny',
+          base: 'tiny',
+          label: 'Tiny',
+          bytes: 1,
+          sha256: 'x',
+          url: 'x',
+          blurb: 'x',
+          englishOnly: false,
+        },
+      }),
+    ]
+    renderPicker(rows, handlers(), { settings: { ...DEFAULT_SETTINGS, englishOnly: false } })
 
     expect(document.querySelector('.model-row-note')).toBeNull()
+    expect(labelsOf()).toEqual(['Tiny'])
   })
 
   it('with englishOnly on, the tiny/base/small rows show their .en labels and the two large rows carry the note', () => {
@@ -119,7 +135,7 @@ describe('ModelPicker', () => {
         resolved: {
           id: 'tiny.en',
           base: 'tiny',
-          label: 'Tiny',
+          label: 'Tiny (English)',
           bytes: 1,
           sha256: 'x',
           url: 'x',
@@ -155,6 +171,10 @@ describe('ModelPicker', () => {
       }),
     ]
     renderPicker(rows, handlers(), { settings: { ...DEFAULT_SETTINGS, englishOnly: true } })
+
+    // The .en swap actually happened: the tiny row's label reflects the
+    // resolved .en model, not the plain 'tiny' catalog entry.
+    expect(labelsOf()).toEqual(['Tiny (English)', 'Large v3 Turbo', 'Large v3'])
 
     expect(document.querySelectorAll('.model-row-note')).toHaveLength(2)
     expect(
@@ -308,5 +328,48 @@ describe('ModelPicker', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
 
     expect(h.onClose).toHaveBeenCalledOnce()
+  })
+
+  // M8: this note must survive even when `resolved.id` doesn't literally
+  // equal `base` — the old `row.resolved.id === row.base &&` clause would
+  // have suppressed it here, which is exactly the case where the user most
+  // needs the explanation (main resolved this row to something unexpected).
+  it('still shows the partial-swap note even if the resolved id does not equal the base id', () => {
+    const rows: ModelRow[] = [
+      modelRow({
+        base: 'large-v3',
+        resolved: {
+          id: 'large-v3', // would differ from `base` under a genuine mis-resolution
+          base: 'large-v3',
+          label: 'Large v3',
+          bytes: 1,
+          sha256: 'x',
+          url: 'x',
+          blurb: 'x',
+          englishOnly: false,
+        },
+      }),
+    ]
+    renderPicker(rows, handlers(), { settings: { ...DEFAULT_SETTINGS, englishOnly: true } })
+
+    expect(document.querySelectorAll('.model-row-note')).toHaveLength(1)
+  })
+
+  // M13: aria-modal="true" alone doesn't stop Tab from reaching the header
+  // behind the scrim — this proves the trap that keeps it inside the dialog.
+  it('traps Tab focus inside the dialog, wrapping from the last focusable element back to the first', () => {
+    const h = handlers()
+    renderPicker([modelRow({ base: 'small', installed: false })], h, { firstRun: false })
+
+    const closeButton = screen.getByRole('button', { name: 'Close' })
+    const downloadButton = screen.getByRole('button', { name: 'Download' })
+
+    downloadButton.focus()
+    expect(document.activeElement).toBe(downloadButton)
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(closeButton)
+
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(downloadButton)
   })
 })

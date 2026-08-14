@@ -28,6 +28,7 @@ const appListeners = new Map<string, ((...args: unknown[]) => void)[]>()
 let userDataDir: string
 let tempDir: string
 let openDialogResult: { canceled: boolean; filePaths: string[] } = { canceled: true, filePaths: [] }
+let singleInstanceLock = true
 
 class FakeBrowserWindow {
   static instances: FakeBrowserWindow[] = []
@@ -37,7 +38,7 @@ class FakeBrowserWindow {
     setWindowOpenHandler: vi.fn(),
     on: vi.fn(),
     getURL: vi.fn(() => ''),
-    session: { setPermissionRequestHandler: vi.fn() },
+    session: { setPermissionRequestHandler: vi.fn(), setPermissionCheckHandler: vi.fn() },
     send: vi.fn(),
   }
   once = vi.fn()
@@ -56,7 +57,7 @@ class FakeBrowserWindow {
 
 vi.mock('electron', () => ({
   app: {
-    requestSingleInstanceLock: () => true,
+    requestSingleInstanceLock: () => singleInstanceLock,
     whenReady: () => Promise.resolve(),
     getPath: (name: string) => (name === 'temp' ? tempDir : userDataDir),
     getLocale: () => 'en-US',
@@ -82,6 +83,14 @@ vi.mock('electron', () => ({
   },
 }))
 
+// Wraps the real `rm`, so the `finally { removeFile(wavPath) }` cleanup every
+// job runs still actually deletes the temp file — this only adds visibility
+// into what path was passed, for the tempWavPath wiring test below.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rm: vi.fn(actual.rm) }
+})
+
 /** Mirrors the preload's own unwrap, without going through contextBridge. */
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const listener = registered.get(channel)
@@ -89,6 +98,21 @@ async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   const result = (await listener({}, ...args)) as IpcResult<T>
   if (result.ok) return result.value
   throw result.error
+}
+
+/**
+ * Seeds a model the real stores will see as installed, and makes it active —
+ * shared by every test below that needs `transcribe:start` to actually reach
+ * job creation instead of stopping at NO_MODEL_INSTALLED. See the second test
+ * above for why a sparse file of the right length is enough.
+ */
+async function seedInstalledModel(): Promise<void> {
+  const tiny = entryFor('tiny')
+  const modelPath = join(userDataDir, 'models', `${tiny.id}.bin`)
+  await mkdir(join(userDataDir, 'models'), { recursive: true })
+  await writeFile(modelPath, '')
+  await truncate(modelPath, tiny.bytes)
+  await invoke(CHANNELS.settingsSet, { activeModel: 'tiny', englishOnly: false })
 }
 
 async function bootTheRealRoot(): Promise<void> {
@@ -104,9 +128,15 @@ beforeEach(async () => {
   appListeners.clear()
   FakeBrowserWindow.instances = []
   openDialogResult = { canceled: true, filePaths: [] }
+  singleInstanceLock = true
   userDataDir = await mkdtemp(join(tmpdir(), 'whisper-drop-root-'))
   tempDir = await mkdtemp(join(tmpdir(), 'whisper-drop-root-temp-'))
   vi.resetModules()
+  // The mocked `electron` module (app.quit, etc.) is not re-created by
+  // resetModules — only cleared here — so call counts from an earlier test
+  // (e.g. the single-instance-lock test's own app.quit()) can't leak into a
+  // later test's assertions about whether *this* test caused a call.
+  vi.clearAllMocks()
 })
 
 afterEach(async () => {
@@ -166,5 +196,104 @@ describe('the composition root, wired for real', () => {
     for (const handler of secondInstanceHandlers) handler()
 
     expect(FakeBrowserWindow.instances[0]?.focus).toHaveBeenCalled()
+  })
+
+  // I5: four more survivors in the composition root, each proven here.
+
+  it('quits immediately when another instance already holds the single-instance lock, instead of opening a second window', async () => {
+    singleInstanceLock = false
+    await bootTheRealRoot()
+
+    const { app } = await import('electron')
+    expect(app.quit).toHaveBeenCalled()
+    expect(FakeBrowserWindow.instances).toHaveLength(0)
+  })
+
+  it('mints a fresh id per job rather than a constant, so two jobs never collide', async () => {
+    await bootTheRealRoot()
+    await seedInstalledModel()
+
+    // A fake path is enough: probe() is cancelled before it would ever
+    // succeed or fail on it, so its realism doesn't matter here.
+    openDialogResult = { canceled: false, filePaths: ['/videos/job-a.mp4'] }
+    const pathA = await invoke<string | null>(CHANNELS.dialogOpenFile)
+    const jobIdA = await invoke<string>(CHANNELS.transcribeStart, pathA)
+    expect(jobIdA).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+
+    // Cancelling aborts the real ffprobe subprocess via the AbortSignal probe()
+    // is wired with, which settles the job fast and deterministically — no
+    // need to wait on ffprobe's own timing against a path that doesn't exist.
+    await invoke(CHANNELS.transcribeCancel, jobIdA)
+
+    // JOB_ALREADY_RUNNING clears asynchronously, once the aborted probe's
+    // rejection propagates through the job's phase machine — so the next
+    // start is retried rather than assumed to succeed immediately.
+    openDialogResult = { canceled: false, filePaths: ['/videos/job-b.mp4'] }
+    const pathB = await invoke<string | null>(CHANNELS.dialogOpenFile)
+
+    const deadline = Date.now() + 5_000
+    let jobIdB: string | undefined
+    while (jobIdB === undefined && Date.now() < deadline) {
+      try {
+        jobIdB = await invoke<string>(CHANNELS.transcribeStart, pathB)
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+    }
+
+    expect(jobIdB).toBeDefined()
+    // A hardcoded constant in place of `randomUUID()` would hand out this
+    // exact same id twice.
+    expect(jobIdB).not.toBe(jobIdA)
+  })
+
+  it("names each job's temp wav after its own id, not a fixed filename", async () => {
+    openDialogResult = { canceled: false, filePaths: ['/videos/job-temp.mp4'] }
+    await bootTheRealRoot()
+    await seedInstalledModel()
+
+    const path = await invoke<string | null>(CHANNELS.dialogOpenFile)
+    const jobId = await invoke<string>(CHANNELS.transcribeStart, path)
+
+    // Cancelling drives the job to its `finally` block fast, where
+    // `removeFile(wavPath)` always runs regardless of outcome.
+    await invoke(CHANNELS.transcribeCancel, jobId)
+
+    const { rm } = (await import('node:fs/promises')) as unknown as {
+      rm: { mock: { calls: unknown[][] } }
+    }
+    const expectedWavPath = join(tempDir, `whisper-drop-${jobId}.wav`)
+    const deadline = Date.now() + 5_000
+    while (
+      !rm.mock.calls.some((call) => call[0] === expectedWavPath) &&
+      Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+
+    // A constant filename in place of `whisper-drop-${jobId}.wav` would never
+    // produce this exact, job-scoped path.
+    expect(rm.mock.calls.some((call) => call[0] === expectedWavPath)).toBe(true)
+  })
+
+  it('waits for cancelActive to settle before quitting on before-quit, rather than quitting immediately', async () => {
+    await bootTheRealRoot()
+
+    const beforeQuitHandlers = appListeners.get('before-quit') ?? []
+    expect(beforeQuitHandlers.length).toBeGreaterThan(0)
+
+    const { app } = await import('electron')
+    const event = { preventDefault: vi.fn() }
+    beforeQuitHandlers[0]?.(event)
+
+    expect(event.preventDefault).toHaveBeenCalled()
+    // cancelActive() awaits pendingStart, then activeRun — both already-
+    // resolved promises here — before its `.finally(() => app.quit())` runs.
+    // A plain `app.quit()` in its place would already have fired by now.
+    expect(app.quit).not.toHaveBeenCalled()
+
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+
+    expect(app.quit).toHaveBeenCalled()
   })
 })

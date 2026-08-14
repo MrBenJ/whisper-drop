@@ -80,8 +80,16 @@ export function App() {
   }, [])
 
   const browse = useCallback(async () => {
-    const filePath = await window.whisperDrop.dialog.openFile()
-    if (filePath !== null) await startTranscription(filePath)
+    // M11: DropZone calls this bare from an onClick handler, with nothing of
+    // its own to catch a rejection — a failing dialog.openFile() would
+    // otherwise be a silent unhandled rejection instead of reaching the
+    // error surface like every other failure here does.
+    try {
+      const filePath = await window.whisperDrop.dialog.openFile()
+      if (filePath !== null) await startTranscription(filePath)
+    } catch (cause) {
+      dispatch({ type: 'failed', error: asIpcFailure(cause) })
+    }
   }, [startTranscription])
 
   // Ahead of the model picker (task 5), which needs the same wiring — writing
@@ -125,8 +133,17 @@ export function App() {
         dispatch({ type: 'failed', error: asIpcFailure(cause) })
       } finally {
         // Runs on cancellation too: the row must stop showing a progress bar.
-        await refresh()
-        setDownloadingBase(null)
+        // M11: refresh() sat outside any try/catch here, so a rejection from
+        // it (e.g. settings.get failing) was an unhandled rejection instead
+        // of reaching the error surface — and would have skipped clearing
+        // downloadingBase below, leaving the row stuck showing a progress bar.
+        try {
+          await refresh()
+        } catch (cause) {
+          dispatch({ type: 'failed', error: asIpcFailure(cause) })
+        } finally {
+          setDownloadingBase(null)
+        }
       }
     },
     [refresh],
@@ -150,18 +167,26 @@ export function App() {
       } catch (cause) {
         dispatch({ type: 'failed', error: asIpcFailure(cause) })
       } finally {
-        await refresh()
+        // M11: same shape as downloadModel above — refresh() rejecting here
+        // used to be an unhandled rejection instead of reaching the user.
+        try {
+          await refresh()
+        } catch (cause) {
+          dispatch({ type: 'failed', error: asIpcFailure(cause) })
+        }
       }
     },
     [refresh],
   )
 
+  // C1: deliberately does not catch. A save failure is caught by `Done`
+  // itself (`handleSave`), right where the transcript and every Save button
+  // stay on screen — routing it through the app-level error state here would
+  // hand the user only "Start over" (UNEXPECTED's `dismiss` action), which
+  // resets `job` and discards the very transcript this save just proved main
+  // still holds.
   const save = useCallback(async (jobId: string, format: ExportFormat) => {
-    try {
-      dispatch({ type: 'saved', path: await window.whisperDrop.exportTranscript.save(jobId, format) })
-    } catch (cause) {
-      dispatch({ type: 'failed', error: asIpcFailure(cause) })
-    }
+    dispatch({ type: 'saved', path: await window.whisperDrop.exportTranscript.save(jobId, format) })
   }, [])
 
   const reveal = useCallback(async (path: string) => {
@@ -246,9 +271,7 @@ export function App() {
         {view === 'done' && state.job && (
           <Done
             job={state.job}
-            onSave={(format) => {
-              if (state.job) void save(state.job.id, format)
-            }}
+            onSave={(format) => (state.job ? save(state.job.id, format) : Promise.resolve())}
             onCopy={copyTranscript}
             onReset={() => dispatch({ type: 'reset' })}
           />

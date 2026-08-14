@@ -60,6 +60,39 @@ export function ModelPicker({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [firstRun, onClose])
 
+  // aria-modal="true" only says the rest of the page is inert to assistive
+  // tech — it doesn't stop Tab from actually reaching the header behind the
+  // scrim. This traps it inside the dialog, wrapping at either end.
+  useEffect(() => {
+    if (firstRun) return
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Tab') return
+      const container = containerRef.current
+      if (!container) return
+
+      const focusable = container.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const active = document.activeElement
+
+      if (event.shiftKey) {
+        if (active === first || !container.contains(active)) {
+          event.preventDefault()
+          last?.focus()
+        }
+      } else if (active === last || !container.contains(active)) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [firstRun])
+
   const picker = (
     <div
       ref={containerRef}
@@ -99,7 +132,7 @@ export function ModelPicker({
         {rows.map((row) => {
           const active = row.base === activeBase
           const downloading = row.downloading !== undefined || row.base === downloadingBase
-          const note = englishOnly && row.resolved.id === row.base && NO_PARTIAL_SWAP_BASES.has(row.base)
+          const note = englishOnly && NO_PARTIAL_SWAP_BASES.has(row.base)
 
           return (
             <li key={row.base} className="model-row-item" aria-current={active ? 'true' : undefined}>
