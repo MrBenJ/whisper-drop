@@ -1,8 +1,39 @@
 #!/usr/bin/env node
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+const PREREQS = [
+  {
+    cmd: 'cmake',
+    purpose: 'building whisper.cpp',
+    install: {
+      darwin: 'brew install cmake',
+      linux: "apt install cmake (or your distro's package manager)",
+      win32: 'install from https://cmake.org/download/ or `winget install Kitware.CMake`',
+    },
+  },
+  {
+    cmd: 'git',
+    purpose: 'cloning whisper.cpp',
+    install: {
+      darwin: 'brew install git',
+      linux: "apt install git (or your distro's package manager)",
+      win32: 'install from https://git-scm.com/download/win or `winget install Git.Git`',
+    },
+  },
+]
+
+// spawnSync(never a shell) sets .error to ENOENT instead of throwing when the binary is missing.
+const missing = PREREQS.filter((p) => spawnSync(p.cmd, ['--version']).error)
+if (missing.length > 0) {
+  for (const p of missing) {
+    console.error(`Missing required command: ${p.cmd} (needed for ${p.purpose})`)
+    console.error(`  Install: ${p.install[process.platform] ?? p.install.linux}`)
+  }
+  process.exit(1)
+}
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const { whisperCppRepo, whisperCppTag } = JSON.parse(
