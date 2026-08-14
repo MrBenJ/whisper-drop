@@ -243,4 +243,43 @@ describe('TranscriptionJob', () => {
     expect(snapshots[0]).toBe(0)
     expect(snapshots.at(-1)).toBe(2)
   })
+
+  it('removeFile rejecting still leaves a clean result', async () => {
+    const job = makeJob({ removeFile: async () => { throw new Error('disk error') } })
+    await expect(job.start()).resolves.toBeUndefined()
+    expect(job.state.phase).toBe('done')
+  })
+
+  it('probe itself rejecting is reported as a failure', async () => {
+    const job = makeJob({
+      probe: async () => {
+        throw new AppError('UNREADABLE_MEDIA', "Couldn't read this file.", 'ffprobe exit 1')
+      },
+    })
+    await job.start()
+    expect(job.state.phase).toBe('failed')
+    expect(job.state.error?.code).toBe('UNREADABLE_MEDIA')
+  })
+
+  it('cancel() after the job finished cannot flip the terminal state', async () => {
+    const job = makeJob()
+    await job.start()
+    job.cancel()
+    expect(job.state.phase).toBe('done')
+  })
+
+  it('reports an ETA at exactly the ten percent threshold', async () => {
+    const etas: (number | undefined)[] = []
+    const job = makeJob({
+      run: async (_options, onSegment) => {
+        onSegment({ index: 0, startMs: 0, endMs: 10_000, text: 'exactly ten percent' }) // 10%
+        return []
+      },
+    })
+    job.subscribe((state) => {
+      if (state.phase === 'transcribing') etas.push(state.etaMs)
+    })
+    await job.start()
+    expect(etas.at(-1)).toEqual(expect.any(Number))
+  })
 })

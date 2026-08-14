@@ -92,7 +92,9 @@ export class TranscriptionJob {
       if (this.cancelled) this.finishCancelled()
       else this.finishFailed(cause)
     } finally {
-      await this.deps.removeFile(wavPath)
+      // The job's outcome is already recorded and delivered to subscribers. A
+      // failed temp cleanup must not convert that into a thrown error.
+      await this.deps.removeFile(wavPath).catch(() => {})
     }
   }
 
