@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { entryFor } from '../../src/main/models/catalog.js'
 import { CHANNELS } from '../../src/shared/ipc.js'
 import type { IpcResult } from '../../src/shared/ipc.js'
 
@@ -9,10 +10,14 @@ import type { IpcResult } from '../../src/shared/ipc.js'
  * Drives the real composition root (`src/main/index.ts`) through a faked
  * `electron`, the same trick `test/main/ipc/wiring.test.ts` uses for the
  * preload. Every handler module is already unit-tested against injected
- * fakes; this is the one place that proves `newJobId`, `hasTrustedPath` /
+ * fakes; this is the one place that proves `newJobId`, `hasTrustedPath`,
  * `consumeTrustedPath`, and the two `issuePath` calls are wired to the real
- * things they claim to be — a wiring mistake here (e.g. `consumeTrustedPath:
- * () => true`) would otherwise fail no test at all.
+ * things they claim to be — a wiring mistake here (e.g. `hasTrustedPath: ()
+ * => true` or a no-op `consumeTrustedPath`) would otherwise fail no test at
+ * all. Proving `consumeTrustedPath` specifically requires a start() that
+ * actually succeeds (past every model check, not just the trust one), which
+ * is why the second test below seeds a fake installed model rather than
+ * stopping at NO_MODEL_INSTALLED.
  */
 
 type Listener = (event: unknown, ...args: unknown[]) => unknown
@@ -118,17 +123,38 @@ describe('the composition root, wired for real', () => {
     })
   })
 
-  it('accepts a path returned by dialog:openFile', async () => {
+  it('accepts a path returned by dialog:openFile, then spends it', async () => {
     openDialogResult = { canceled: false, filePaths: ['/videos/e2e-real-root.mp4'] }
     await bootTheRealRoot()
+
+    // Seed a model the real stores will see as installed, so start() runs
+    // all the way to consumeTrustedPath instead of stopping earlier at the
+    // unrelated NO_MODEL_INSTALLED check. isInstalled only compares file
+    // size to the catalog, so a sparse file of the right length is enough —
+    // no need to actually fetch or write out a real model.
+    const tiny = entryFor('tiny')
+    const modelPath = join(userDataDir, 'models', `${tiny.id}.bin`)
+    await mkdir(join(userDataDir, 'models'), { recursive: true })
+    await writeFile(modelPath, '')
+    await truncate(modelPath, tiny.bytes)
+    // englishOnly is forced off: the fake profile's locale ('en-US') would
+    // otherwise make resolveModelId pick 'tiny.en', which the seeded file
+    // above (named for plain 'tiny') wouldn't match.
+    await invoke(CHANNELS.settingsSet, { activeModel: 'tiny', englishOnly: false })
 
     const path = await invoke<string | null>(CHANNELS.dialogOpenFile)
     expect(path).toBe('/videos/e2e-real-root.mp4')
 
-    // Got past the trust boundary — on a fresh profile the only way it can
-    // still fail is because no model is installed, never INVALID_REQUEST.
+    // Got all the way past the trust boundary and every model check — this
+    // is what actually reaches consumeTrustedPath, not just hasTrustedPath.
+    await expect(invoke(CHANNELS.transcribeStart, path)).resolves.toEqual(expect.any(String))
+
+    // The entry was genuinely spent by that start() — not merely checked and
+    // left alone — so the identical path, never re-issued, is now rejected
+    // on trust grounds alone. A no-op consumeTrustedPath would let this
+    // resolve again instead of rejecting.
     await expect(invoke(CHANNELS.transcribeStart, path)).rejects.toMatchObject({
-      code: 'NO_MODEL_INSTALLED',
+      code: 'INVALID_REQUEST',
     })
   })
 
