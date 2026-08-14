@@ -1,1 +1,405 @@
-:root { color-scheme: dark; }
+/* whisper-drop — visual system
+ *
+ * Direction: an audio-engineer's instrument, not a generic app shell. Warm
+ * paper/graphite surfaces, a single brass/amber signal color reserved for
+ * things that are actually active (drag-hover, progress, focus), and a
+ * monospace face for anything that's a reading — durations, percentages,
+ * ETAs — the way a tape counter or a meter reads out. No webfonts, no
+ * framework: everything below is the system font stack and hand-written CSS.
+ */
+
+:root {
+  color-scheme: light;
+
+  --paper: #f5f2ea;
+  --ink: #201e19;
+  --ink-muted: #6d6555;
+  --hairline: #ddd5c3;
+  --surface: #ffffff;
+  --accent: #b96f1f;
+  --accent-ink: #fffaf1;
+  --focus-ring: #8a5116;
+
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 40px;
+  --radius: 4px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+
+    --paper: #17150f;
+    --ink: #ece6d8;
+    --ink-muted: #9c9384;
+    --hairline: #37332a;
+    --surface: #1f1c15;
+    --accent: #dd9a4b;
+    --accent-ink: #1a1409;
+    --focus-ring: #dd9a4b;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---------- Header ---------- */
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+  /* Electron's native titlebar sits above this in v1 — no drag region needed here. */
+}
+
+.model-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  margin: calc(var(--space-1) * -1) calc(var(--space-2) * -1);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+}
+
+.model-button:hover {
+  border-color: var(--hairline);
+}
+
+.model-button-eyebrow {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.model-button-value {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.language-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.language-control select {
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  color: var(--ink);
+}
+
+.switch-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 12px;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+/* A real checkbox, restyled as a track-and-thumb switch rather than a div. */
+.switch-control input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--hairline);
+  cursor: pointer;
+  transition: background-color 120ms ease;
+  flex: 0 0 auto;
+}
+
+.switch-control input[type='checkbox']::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--surface);
+  transition: transform 120ms ease;
+}
+
+.switch-control input[type='checkbox']:checked {
+  background: var(--accent);
+}
+
+.switch-control input[type='checkbox']:checked::before {
+  transform: translateX(14px);
+}
+
+/* ---------- Main / shared ---------- */
+
+.app-main {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+}
+
+.placeholder-view {
+  margin: auto;
+  max-width: 40ch;
+  text-align: center;
+  color: var(--ink-muted);
+}
+
+/* ---------- Drop zone ---------- */
+
+.drop-zone {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin: var(--space-4);
+  border: 2px dashed var(--hairline);
+  border-radius: 8px;
+  color: var(--ink-muted);
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.drop-zone--hovering {
+  border-color: var(--accent);
+  border-style: solid;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--ink);
+}
+
+.drop-zone--disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.drop-zone-glyph {
+  color: inherit;
+}
+
+.drop-zone-prompt {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.drop-zone--disabled .drop-zone-prompt {
+  font-weight: 400;
+  color: var(--ink-muted);
+  max-width: 32ch;
+  text-align: center;
+}
+
+.drop-zone-or {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.drop-zone-warning {
+  margin: var(--space-2) 0 0;
+  font-size: 12px;
+  color: var(--accent);
+  max-width: 36ch;
+  text-align: center;
+}
+
+.browse-button {
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.browse-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.browse-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* ---------- Working ---------- */
+
+.working {
+  margin: auto;
+  width: min(480px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.working-file {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.working-filename {
+  font-size: 18px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-duration {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-muted);
+  flex: 0 0 auto;
+}
+
+.working-phase {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.working-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+/* The signature element: a segmented level meter, not a smooth gradient bar —
+ * ticks read like an analog VU meter rather than a generic web progress bar. */
+.progress-track {
+  flex: 1 1 auto;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--hairline);
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      var(--accent) 0 6px,
+      color-mix(in srgb, var(--accent) 55%, var(--paper)) 6px 8px
+    );
+  transition: width 200ms ease;
+}
+
+.progress-percent {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-muted);
+  min-width: 3ch;
+  text-align: right;
+}
+
+.working-eta {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.cancel-button {
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.cancel-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.cancel-button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .drop-zone,
+  .progress-fill,
+  .switch-control input[type='checkbox'],
+  .switch-control input[type='checkbox']::before {
+    transition: none;
+  }
+}
