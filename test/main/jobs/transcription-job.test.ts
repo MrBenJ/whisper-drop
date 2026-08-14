@@ -268,6 +268,45 @@ describe('TranscriptionJob', () => {
     expect(job.state.phase).toBe('done')
   })
 
+  it('cancel() actually aborts the signal handed to a port, not just the reported phase (I4)', async () => {
+    let capturedSignal: AbortSignal | undefined
+    let job!: TranscriptionJob
+    job = makeJob({
+      // Never resolves on its own — the only way out is the signal aborting,
+      // which is exactly what this proves cancel() causes.
+      probe: (_filePath: string, signal: AbortSignal) =>
+        new Promise<MediaInfo>((_resolve, reject) => {
+          capturedSignal = signal
+          signal.addEventListener('abort', () => reject(new Error('aborted')))
+        }),
+    })
+
+    const run = job.start()
+    job.cancel()
+
+    // A bare `await run` here hangs to Vitest's blanket 5000ms test timeout
+    // if cancel() regresses — a correct gate, but a flat 5s tax on every CI
+    // run and a message that doesn't say what actually failed. Race against
+    // a short, explicit deadline instead, with a message that names the real
+    // failure. `controller.abort()` fires its listeners synchronously, so
+    // 200ms is generous margin, not a tight bound.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('cancel() did not abort the probe signal within 200ms')),
+        200,
+      )
+    })
+    try {
+      await Promise.race([run, deadline])
+    } finally {
+      clearTimeout(timer)
+    }
+
+    expect(capturedSignal?.aborted).toBe(true)
+    expect(job.state.phase).toBe('cancelled')
+  })
+
   it('passes the abort signal through to the probe port', async () => {
     let capturedSignal: AbortSignal | undefined
     const job = makeJob({

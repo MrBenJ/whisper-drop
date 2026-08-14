@@ -1,7 +1,7 @@
 import { msToTimestamp } from '../../shared/time.js'
-import type { Segment } from '../../shared/types.js'
+import type { ExportFormat, Segment } from '../../shared/types.js'
 
-export type ExportFormat = 'txt' | 'srt' | 'vtt'
+export type { ExportFormat }
 
 /** Trim and collapse internal whitespace so wrapped output reads as one line. */
 function normalise(text: string): string {

@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    // Not because this program's own code needs Node — the boundary test
+    // below proves it doesn't — but because `src/preload` is in this program
+    // and Electron's own type declarations reference Node ambient types
+    // (`Buffer`, the `NodeJS` namespace) even in the corners of its API
+    // surface this preload never touches. Dropping this makes `tsc -p
+    // tsconfig.web.json` fail on `import ... from 'electron'` itself.
+    "types": ["node"]
+  },
+  "include": ["src/renderer", "src/preload", "src/shared", "test/renderer", "test/preload"]
+}

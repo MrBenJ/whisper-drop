@@ -5,6 +5,7 @@ import { dirname } from 'node:path'
 import { Readable, Transform } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { AppError } from '../../shared/errors.js'
+import type { DownloadProgress } from '../../shared/types.js'
 import { MODEL_URL_PREFIX, type ModelEntry } from './catalog.js'
 
 /** Refuse a download that would leave the disk this close to full. */
@@ -20,12 +21,7 @@ export const HEADROOM_BYTES = 64 * 1024 * 1024
  */
 const DEFAULT_TRUSTED_PREFIXES: readonly string[] = [MODEL_URL_PREFIX]
 
-export type DownloadProgress = {
-  id: ModelEntry['id']
-  receivedBytes: number
-  totalBytes: number
-  bytesPerSecond: number
-}
+export type { DownloadProgress }
 
 export type DownloadOptions = {
   entry: ModelEntry
