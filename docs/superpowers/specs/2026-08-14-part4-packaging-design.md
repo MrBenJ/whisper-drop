@@ -72,7 +72,8 @@ A separate workflow from CI, triggered by a version tag **or** `workflow_dispatc
 `macos-latest`, `windows-latest` and `ubuntu-latest`.
 
 Each platform job builds whisper.cpp for its own platform (cached on the pinned tag, exactly as the
-existing `integration` and `e2e` jobs do), runs `electron-builder`, and uploads its artifacts.
+existing `integration` and `e2e` jobs do), runs `electron-builder`, and verifies the packaged
+binaries' architecture. It retains nothing — see below.
 
 **Nothing is published.** No tag is pushed by this work and no GitHub Release is created. The
 workflow builds and packages on all three platforms but retains no artifacts — a workflow-run
