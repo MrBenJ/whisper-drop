@@ -141,21 +141,31 @@ npm run test:e2e  # an end-to-end pass through the real app
 
 ## Releases
 
-Artifacts are built by `.github/workflows/release.yml`, triggered by pushing a `v*` tag or running
-it manually (`workflow_dispatch`). Nothing is published or tagged automatically — the workflow
-uploads each platform's build to the workflow run for a human to download, test, and release
-deliberately.
+`.github/workflows/release.yml`, triggered by pushing a `v*` tag or running it manually
+(`workflow_dispatch`), builds installers for all four targets (macOS arm64, macOS x64, Windows x64,
+Linux x64) on every run. **It deliberately retains no artifacts.** The build, package, and binary
+verification steps all still run and still fail the job if packaging breaks — only the final upload
+is disabled. That's not an oversight: this is a public repo, so a GitHub Actions workflow-run
+artifact is downloadable by anyone the moment it exists, and the `ffmpeg-static` binary this app
+bundles isn't legally redistributable yet (see [Licenses](#licenses) below). Nothing is published or
+tagged automatically either way — but until that's resolved, nothing downloadable is produced at
+all. See the comment block in `release.yml` for the exact disabled step and how to restore it.
+
+If you want to test a packaged build yourself, build it locally — see
+[Building from source](#building-from-source) above; `npm run build` followed by
+`npx electron-builder` (with the flags for your platform, e.g. `--mac --arm64`) produces the same
+installer the workflow would.
 
 ### Manual smoke check before release
 
 CI proves the app builds and packages on all four targets; it does not prove a packaged artifact
 actually transcribes on a real machine. (This is not hypothetical — code review once caught this
 exact workflow silently packaging an arm64 `ffmpeg` into the macOS x64 build, which would have
-installed, launched, and looked perfect while every transcription failed.) Before treating a build
-as release-ready, a human should, **for each of the four artifacts** (macOS arm64, macOS x64,
-Windows x64, Linux x64):
+installed, launched, and looked perfect while every transcription failed.) Once release artifacts
+are being produced again, before treating a build as release-ready, a human should, **for each of
+the four artifacts** (macOS arm64, macOS x64, Windows x64, Linux x64):
 
-1. Download that platform's artifact from the workflow run.
+1. Build (or otherwise obtain) that platform's installer.
 2. Install it the way an end user would — see the platform instructions above, including the
    unsigned-app walkthrough (macOS System Settings path, Windows SmartScreen "Run anyway", or
    `apt install ./whisper-drop_*.deb` / the AppImage directly on Linux).
@@ -183,18 +193,20 @@ screen (open it from the header) as well as here:
   LGPL build. This app invokes it as a separate executable and does not link against it, which is
   the correct answer to the *LGPL linking* question — but it doesn't address `--enable-nonfree`.
   Under [ffmpeg's own terms](https://ffmpeg.org/legal.html), **binaries built with
-  `--enable-nonfree` must not be redistributed.** That is why no release artifacts are published
-  from this repo today (see [Releases](#releases) above) — see "Before publishing releases" below
-  before that changes.
+  `--enable-nonfree` must not be redistributed.** That is why `release.yml` deliberately retains no
+  downloadable artifacts today (see [Releases](#releases) above) — see "Before publishing releases"
+  below before that changes.
 
 ### Before publishing releases
 
 **This is not yet resolved, and must be before any artifact is distributed publicly.** The
 `ffmpeg-static` binary this app bundles is a nonfree build (see above); FFmpeg's own licensing
-terms say a binary built that way may not be redistributed at all. Current exposure is low — this
+terms say a binary built that way may not be redistributed at all. Current exposure is zero — this
 repository doesn't contain ffmpeg (it's an npm dependency fetched at install time), and
-`release.yml` never publishes anything; artifacts only ever land on a workflow run for a human to
-download. The exposure would begin the moment an artifact is handed to someone outside that loop.
+`release.yml` builds installers on every tag or manual run but uploads none of them: the artifact
+step is disabled, not merely unpublished. The exposure would begin the moment that step is
+re-enabled without this being resolved first, since a workflow-run artifact in a public repo is
+downloadable by anyone, not just a human on the release-managing loop.
 
 This is a decision for the repo owner, not something to resolve unilaterally. The options, without
 a recommendation between them:

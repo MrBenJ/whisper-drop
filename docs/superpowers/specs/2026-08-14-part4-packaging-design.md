@@ -74,9 +74,12 @@ A separate workflow from CI, triggered by a version tag **or** `workflow_dispatc
 Each platform job builds whisper.cpp for its own platform (cached on the pinned tag, exactly as the
 existing `integration` and `e2e` jobs do), runs `electron-builder`, and uploads its artifacts.
 
-**Nothing is published.** No tag is pushed by this work and no GitHub Release is created. Artifacts
-are uploaded to the workflow run so they can be downloaded and tested. That is what the user asked
-for: build pipeline proven, publishing left as a deliberate human act.
+**Nothing is published.** No tag is pushed by this work and no GitHub Release is created. The
+workflow builds and packages on all three platforms but retains no artifacts — a workflow-run
+artifact on a public repo is downloadable by anyone, and the bundled `ffmpeg-static` binary isn't
+legally redistributable yet (see the README's "Before publishing releases"). That is what the user
+asked for: build pipeline proven, publishing left as a deliberate human act, with nothing
+downloadable produced in the meantime.
 
 The existing `ci.yml` is untouched other than where the two share cache keys.
 
@@ -120,8 +123,10 @@ cheaply here; the README documents a manual smoke check for a human before any r
 ## Decisions made unsupervised
 
 1. **No public release, and no tag pushed.** The user chose "CI green, no public release" when
-   asked. The workflow supports `workflow_dispatch` so a human can produce artifacts on demand
-   without a tag. *Cost if wrong:* someone has to click a button to get a build.
+   asked. The workflow supports `workflow_dispatch` so a human can trigger a packaging run on
+   demand without a tag — though, per the ffmpeg-static licensing issue below, that run currently
+   proves packaging works without producing a downloadable artifact. *Cost if wrong:* someone has
+   to click a button to get a build.
 2. **Unsigned on all platforms.** The user declined the Apple Developer Program for now. The
    README carries the walkthrough instead. *Cost if wrong:* a support question from a client;
    notarization is a later config change, not a restructure.

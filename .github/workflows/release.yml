@@ -7,8 +7,12 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-# Nothing is published and no release is created. Artifacts are attached to the
-# workflow run for a human to download, test, and release deliberately.
+# Nothing is published and no release is created, and no downloadable artifact is
+# retained either: this is a public repo, and a workflow-run artifact is externally
+# downloadable the moment it exists, which is exactly what the ffmpeg-static licence
+# problem below says must not happen yet. This workflow proves packaging works on all
+# three platforms and then throws the output away. See the "Package" and "Verify"
+# steps, and the commented-out upload step at the end of the job, for the full story.
 permissions:
   contents: read
 
@@ -132,9 +136,29 @@ jobs:
           # Developer ID that happens to be on the machine.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: whisper-drop-${{ matrix.slug }}
-          path: ${{ matrix.artifacts }}
-          if-no-files-found: error
-          retention-days: 14
+      # Artifact upload is deliberately disabled, not merely unfinished.
+      #
+      # The `ffmpeg-static` binary this app bundles is built `--enable-nonfree` (see the
+      # "Licenses" section of the README) and FFmpeg's own terms say a binary built that
+      # way must not be redistributed. This is a public repo, so a GitHub Actions
+      # workflow-run artifact does not stay internal the way build output on a private
+      # CI runner would — anyone can download it the moment it exists. Uploading here on
+      # every `v*` tag or manual dispatch would recreate the exact distribution the
+      # README says isn't safe yet, regardless of whether a GitHub Release is ever cut.
+      #
+      # Do not re-enable this step until that's resolved — either by bundling an
+      # LGPL-only ffmpeg build (one without `--enable-nonfree`), or by dropping the
+      # bundled ffmpeg entirely and requiring a system install. See "Before publishing
+      # releases" in the README for the full option writeup. Everything above this
+      # point — dependency install with the arch pin, the whisper.cpp build, the
+      # electron-builder package step, and the binary verification step — still runs and
+      # still fails the job loudly if packaging breaks; only the upload is gone.
+      #
+      # Restore verbatim when it's time to re-enable:
+      #
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: whisper-drop-${{ matrix.slug }}
+      #     path: ${{ matrix.artifacts }}
+      #     if-no-files-found: error
+      #     retention-days: 14
