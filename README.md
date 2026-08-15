@@ -28,14 +28,26 @@ expected — here's exactly what to click through.
 
 1. Download the `.dmg` for your Mac (arm64 for Apple Silicon, x64 for an Intel Mac) and open it.
 2. Drag **whisper-drop** into your Applications folder.
-3. The first time you open it, **don't just double-click it** — macOS will refuse with
-   *"Apple could not verify that whisper-drop is free of malware"* and offer no way past that
-   dialog. Instead:
-   - Open **Applications** in Finder.
-   - **Right-click** (or Control-click) **whisper-drop**, and choose **Open** from the menu.
-   - A similar warning appears, but this time with an **Open** button. Click it.
+3. The first time you open it — however you open it — macOS will refuse with *"Apple could not
+   verify that whisper-drop is free of malware."* That warning is expected: it means "an
+   unrecognized developer built this," not "this is dangerous" (see [Why
+   unsigned](#why-unsigned)). On a current Mac, this dialog offers only **Move to Trash** and
+   **Done** — there is no **Open** button here, so don't look for one. Click **Done**, then:
+   - Open **System Settings**.
+   - Go to **Privacy & Security**, and scroll down to the **Security** section near the bottom.
+   - You'll see a line reading something like *"whisper-drop was blocked to protect your Mac."*
+     Click **Open Anyway** next to it.
+   - Authenticate with your password or Touch ID when asked.
+   - One more confirmation dialog appears — this one does have an **Open Anyway** button. Click it,
+     and the app launches.
 4. From then on, opening it normally (double-click, Spotlight, the Dock) works like any other app.
-   You only do the right-click dance once.
+   You only do this once.
+
+> **macOS 14 (Sonoma) and earlier:** those versions still show an **Open** button directly on the
+> right-click menu — open **Applications** in Finder, **Right-click** (or Control-click)
+> **whisper-drop**, choose **Open**, then click **Open** again on the dialog that follows. Apple
+> removed this shortcut in macOS 15 Sequoia, which is why the System Settings path above is now the
+> one that works on any current Mac.
 
 ### Windows
 
@@ -51,7 +63,9 @@ expected — here's exactly what to click through.
 Two options, your choice:
 
 - **AppImage**: download it, `chmod +x` it, and run it directly. No install step.
-- **`.deb`**: `sudo dpkg -i whisper-drop_*.deb` on Debian/Ubuntu-family distributions.
+- **`.deb`**: `sudo apt install ./whisper-drop_*.deb` on Debian/Ubuntu-family distributions. (Not
+  `dpkg -i` — it installs the package but leaves its dependencies unmet; `apt install` with a
+  relative/local path resolves them too.)
 
 Neither is signed, but Linux doesn't gate unsigned binaries the way macOS and Windows do, so there
 is no extra click-path to document here.
@@ -125,6 +139,33 @@ npm run build     # production build, into out/
 npm run test:e2e  # an end-to-end pass through the real app
 ```
 
+## Releases
+
+Artifacts are built by `.github/workflows/release.yml`, triggered by pushing a `v*` tag or running
+it manually (`workflow_dispatch`). Nothing is published or tagged automatically — the workflow
+uploads each platform's build to the workflow run for a human to download, test, and release
+deliberately.
+
+### Manual smoke check before release
+
+CI proves the app builds and packages on all four targets; it does not prove a packaged artifact
+actually transcribes on a real machine. (This is not hypothetical — code review once caught this
+exact workflow silently packaging an arm64 `ffmpeg` into the macOS x64 build, which would have
+installed, launched, and looked perfect while every transcription failed.) Before treating a build
+as release-ready, a human should, **for each of the four artifacts** (macOS arm64, macOS x64,
+Windows x64, Linux x64):
+
+1. Download that platform's artifact from the workflow run.
+2. Install it the way an end user would — see the platform instructions above, including the
+   unsigned-app walkthrough (macOS System Settings path, Windows SmartScreen "Run anyway", or
+   `apt install ./whisper-drop_*.deb` / the AppImage directly on Linux).
+3. Launch it and drop in one real audio or video file.
+4. Confirm it transcribes successfully end to end — the app opening is not enough; the point is to
+   catch a failure that only shows up once ffmpeg or whisper-cli actually runs.
+
+Ideally do this on real hardware per architecture, especially for macOS x64 — a VM or Rosetta can
+mask exactly the arch-mismatch failure this check exists to catch.
+
 ## Licenses
 
 whisper-drop itself is [MIT licensed](LICENSE) — Copyright (c) 2026 Ben Junya. Do what you like
@@ -136,10 +177,35 @@ screen (open it from the header) as well as here:
 - **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)**, MIT licensed. Built from source at a
   pinned tag and bundled as its own executable — whisper-drop spawns it as a child process, it
   isn't linked into the app.
-- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio, under
-  [ffmpeg's own licence](https://ffmpeg.org/legal.html) (LGPL/GPL depending on build). Like
-  whisper.cpp, it's invoked as a separate executable rather than linked against, which is the
-  licence position this app relies on.
+- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio. The binary
+  supplied by the `ffmpeg-static` npm package is a **GPL/nonfree build** — running it with
+  `-version` shows `--enable-gpl --enable-version3 --enable-nonfree` in its configuration, not the
+  LGPL build. This app invokes it as a separate executable and does not link against it, which is
+  the correct answer to the *LGPL linking* question — but it doesn't address `--enable-nonfree`.
+  Under [ffmpeg's own terms](https://ffmpeg.org/legal.html), **binaries built with
+  `--enable-nonfree` must not be redistributed.** That is why no release artifacts are published
+  from this repo today (see [Releases](#releases) above) — see "Before publishing releases" below
+  before that changes.
+
+### Before publishing releases
+
+**This is not yet resolved, and must be before any artifact is distributed publicly.** The
+`ffmpeg-static` binary this app bundles is a nonfree build (see above); FFmpeg's own licensing
+terms say a binary built that way may not be redistributed at all. Current exposure is low — this
+repository doesn't contain ffmpeg (it's an npm dependency fetched at install time), and
+`release.yml` never publishes anything; artifacts only ever land on a workflow run for a human to
+download. The exposure would begin the moment an artifact is handed to someone outside that loop.
+
+This is a decision for the repo owner, not something to resolve unilaterally. The options, without
+a recommendation between them:
+
+- **Bundle an LGPL-only ffmpeg build instead** — a build without `--enable-nonfree` (and without
+  `--enable-gpl`, if LGPL rather than GPL is wanted) from a different static-build source, so the
+  redistribution restriction doesn't apply.
+- **Stop bundling ffmpeg and require a system install** — have whisper-drop call whatever `ffmpeg`
+  the user already has (e.g. via Homebrew, apt, or a Windows install), and document it as a
+  prerequisite. This side-steps redistributing ffmpeg at all, at the cost of an extra install step
+  for every user.
 
 ## Built by Human Balance AI
 

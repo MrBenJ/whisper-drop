@@ -45,6 +45,18 @@ const { whisperCppRepo, whisperCppTag } = JSON.parse(
 // workflow produces both an arm64 and an x64 DMG from one arm64 runner, and
 // `extraResources` picks the directory by name, so the name has to say which
 // arch the binary inside is.
+//
+// electron-builder.json's `extraResources.from`/`.to` (`resources/${platform}-${arch}`)
+// use electron-builder's own macros: `${arch}` is the arch electron-builder is packaging
+// for (`--arm64`/`--x64`), but `${platform}` always expands to the *host's*
+// `process.platform` — there is no target-platform macro, because electron-builder
+// (like this script) never cross-builds across platforms, only across arch on macOS.
+// That's why this only works: every matrix job in release.yml runs natively for its
+// platform. A future cross-platform build would silently write to/read from the wrong
+// `resources/<platform>-<arch>` directory. electron-builder.json can't carry this note
+// itself — it's parsed with strict `JSON.parse` by `test/build/electron-builder-config.test.ts`
+// (comments aren't valid JSON) and validated against a schema that rejects any unrecognized
+// key, so this is the closest place it can live without breaking either.
 const targetArch = process.env.WHISPER_DROP_TARGET_ARCH ?? process.arch
 if (targetArch !== 'x64' && targetArch !== 'arm64') {
   console.error(`WHISPER_DROP_TARGET_ARCH must be x64 or arm64, received ${targetArch}`)

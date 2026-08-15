@@ -25,27 +25,32 @@ jobs:
             slug: mac-arm64
             os: macos-latest
             arch: arm64
+            platform: darwin
             builder: --mac --arm64
             artifacts: dist/*.dmg
           # Cross-built from the same arm64 runner: whisper.cpp via
           # CMAKE_OSX_ARCHITECTURES, Electron because electron-builder
-          # downloads the x64 runtime it is asked for.
+          # downloads the x64 runtime it is asked for, and ffmpeg-static via
+          # the "Install the ffmpeg-static binary" step below.
           - name: macOS x64
             slug: mac-x64
             os: macos-latest
             arch: x64
+            platform: darwin
             builder: --mac --x64
             artifacts: dist/*.dmg
           - name: Windows x64
             slug: win-x64
             os: windows-latest
             arch: x64
+            platform: win32
             builder: --win --x64
             artifacts: dist/*.exe
           - name: Linux x64
             slug: linux-x64
             os: ubuntu-latest
             arch: x64
+            platform: linux
             builder: --linux --x64
             artifacts: |
               dist/*.AppImage
@@ -58,6 +63,26 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+
+      # ffmpeg-static downloads exactly one binary at install time, chosen by
+      # npm_config_arch/npm_config_platform (falling back to the host's
+      # os.arch()/os.platform() if unset) — see node_modules/ffmpeg-static/install.js.
+      # A bare `npm ci` above fetches the *runner's* arch, which is wrong
+      # whenever matrix.arch cross-builds (macOS x64 on this arm64 runner):
+      # the app would install and launch fine, then fail every transcode
+      # silently. Force a reinstall pinned to the arch we're packaging for.
+      # install.js skips its download if a binary already sits at the target
+      # path, so the one `npm ci` just fetched has to be removed first.
+      - name: Install the ${{ matrix.arch }} ffmpeg-static binary
+        shell: bash
+        run: |
+          rm -f node_modules/ffmpeg-static/ffmpeg node_modules/ffmpeg-static/ffmpeg.exe \
+                node_modules/ffmpeg-static/ffmpeg.LICENSE node_modules/ffmpeg-static/ffmpeg.README
+          npm rebuild ffmpeg-static
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          npm_config_platform: ${{ matrix.platform }}
+
       - run: cmake --version
 
       - name: Read whisper.cpp tag
@@ -67,7 +92,10 @@ jobs:
 
       # Same convention as ci.yml's integration and e2e jobs, plus the arch:
       # both macOS jobs run on the same runner.os and build different binaries
-      # into the same `resources/` path, so the tag alone would collide.
+      # into the same `resources/` path, so the tag alone would collide. For
+      # the Linux x64 leg specifically this key is identical to ci.yml's
+      # `${{ runner.os }}-whisper-<tag>-x64` — deliberate, so a push that
+      # already primed CI's cache doesn't pay to rebuild whisper.cpp again here.
       - name: Cache compiled whisper binary
         uses: actions/cache@v4
         with:
@@ -82,20 +110,15 @@ jobs:
           WHISPER_DROP_TARGET_ARCH: ${{ matrix.arch }}
 
       # electron-builder only warns when an extraResources source is missing,
-      # which would ship an installer that cannot transcribe. Fail here instead.
-      - name: Verify the platform-matched whisper-cli exists
+      # which would ship an installer that cannot transcribe. Fail here
+      # instead — for whisper-cli (existence only; npm run setup always
+      # compiles for the arch it's asked for) and for ffmpeg-static
+      # (existence *and* architecture, since its binary is downloaded, not
+      # compiled, and the previous step's reinstall is what this proves
+      # actually worked).
+      - name: Verify the platform-matched whisper-cli and ffmpeg exist
         shell: bash
-        run: |
-          node -e "
-            const { existsSync } = require('node:fs')
-            const exe = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
-            const path = 'resources/' + process.platform + '-' + process.env.TARGET_ARCH + '/' + exe
-            if (!existsSync(path)) {
-              console.error('missing ' + path + ' — electron-builder would package an app that cannot transcribe')
-              process.exit(1)
-            }
-            console.log('found ' + path)
-          "
+        run: node scripts/verify-release-binaries.mjs
         env:
           TARGET_ARCH: ${{ matrix.arch }}
 
