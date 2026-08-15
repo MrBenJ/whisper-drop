@@ -40,7 +40,39 @@ const { whisperCppRepo, whisperCppTag } = JSON.parse(
   readFileSync(join(ROOT, 'whisper.manifest.json'), 'utf8'),
 )
 
-const target = `${process.platform}-${process.arch}`
+// The arch to build *for*, which is the host arch unless a release build asks
+// otherwise. macOS is the only platform we cross-build on: the release
+// workflow produces both an arm64 and an x64 DMG from one arm64 runner, and
+// `extraResources` picks the directory by name, so the name has to say which
+// arch the binary inside is.
+//
+// electron-builder.json's `extraResources.from`/`.to` (`resources/${platform}-${arch}`)
+// use electron-builder's own macros: `${arch}` is the arch electron-builder is packaging
+// for (`--arm64`/`--x64`), but `${platform}` always expands to the *host's*
+// `process.platform` — there is no target-platform macro, because electron-builder
+// (like this script) never cross-builds across platforms, only across arch on macOS.
+// That's why this only works: every matrix job in release.yml runs natively for its
+// platform. A future cross-platform build would silently write to/read from the wrong
+// `resources/<platform>-<arch>` directory. electron-builder.json can't carry this note
+// itself — it's parsed with strict `JSON.parse` by `test/build/electron-builder-config.test.ts`
+// (comments aren't valid JSON) and validated against a schema that rejects any unrecognized
+// key, so this is the closest place it can live without breaking either.
+const targetArch = process.env.WHISPER_DROP_TARGET_ARCH ?? process.arch
+if (targetArch !== 'x64' && targetArch !== 'arm64') {
+  console.error(`WHISPER_DROP_TARGET_ARCH must be x64 or arm64, received ${targetArch}`)
+  process.exit(1)
+}
+if (targetArch !== process.arch && process.platform !== 'darwin') {
+  console.error(
+    `Cross-building whisper.cpp for ${targetArch} is only supported on macOS (host is ${process.platform}-${process.arch})`,
+  )
+  process.exit(1)
+}
+
+const target = `${process.platform}-${targetArch}`
+// A separate tree per cross-build so a stale CMake cache from the host arch
+// cannot leak in. The native case keeps using `build`, unchanged.
+const buildDir = targetArch === process.arch ? 'build' : `build-${targetArch}`
 const exe = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
 const outDir = join(ROOT, 'resources', target)
 const outBin = join(outDir, exe)
@@ -63,21 +95,24 @@ if (existsSync(join(src, '.git'))) {
 }
 
 const cmakeArgs = [
-  '-B', 'build',
+  '-B', buildDir,
   '-DCMAKE_BUILD_TYPE=Release',
   '-DBUILD_SHARED_LIBS=OFF',
   '-DWHISPER_BUILD_TESTS=OFF',
   '-DWHISPER_BUILD_EXAMPLES=ON',
   '-DWHISPER_BUILD_SERVER=OFF',
 ]
-if (process.platform === 'darwin') cmakeArgs.push('-DGGML_METAL_EMBED_LIBRARY=ON')
+if (process.platform === 'darwin') {
+  cmakeArgs.push('-DGGML_METAL_EMBED_LIBRARY=ON')
+  cmakeArgs.push(`-DCMAKE_OSX_ARCHITECTURES=${targetArch === 'x64' ? 'x86_64' : 'arm64'}`)
+}
 
 run('cmake', cmakeArgs, src)
-run('cmake', ['--build', 'build', '--config', 'Release', '-j'], src)
+run('cmake', ['--build', buildDir, '--config', 'Release', '-j'], src)
 
 const candidates = [
-  join(src, 'build', 'bin', exe),
-  join(src, 'build', 'bin', 'Release', exe),
+  join(src, buildDir, 'bin', exe),
+  join(src, buildDir, 'bin', 'Release', exe),
 ]
 const built = candidates.find((p) => existsSync(p))
 if (!built) {

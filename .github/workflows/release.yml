@@ -1,0 +1,164 @@
+name: Release build
+
+# Separate from ci.yml on purpose: different triggers, different runtimes, and
+# a failure here means "no artifact", not "the code is broken".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Nothing is published and no release is created, and no downloadable artifact is
+# retained either: this is a public repo, and a workflow-run artifact is externally
+# downloadable the moment it exists, which is exactly what the ffmpeg-static licence
+# problem below says must not happen yet. This workflow proves packaging works on all
+# three platforms and then throws the output away. See the "Package" and "Verify"
+# steps, and the commented-out upload step at the end of the job, for the full story.
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not hide whether the others build.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            slug: mac-arm64
+            os: macos-latest
+            arch: arm64
+            platform: darwin
+            builder: --mac --arm64
+            artifacts: dist/*.dmg
+          # Cross-built from the same arm64 runner: whisper.cpp via
+          # CMAKE_OSX_ARCHITECTURES, Electron because electron-builder
+          # downloads the x64 runtime it is asked for, and ffmpeg-static via
+          # the "Install the ffmpeg-static binary" step below.
+          - name: macOS x64
+            slug: mac-x64
+            os: macos-latest
+            arch: x64
+            platform: darwin
+            builder: --mac --x64
+            artifacts: dist/*.dmg
+          - name: Windows x64
+            slug: win-x64
+            os: windows-latest
+            arch: x64
+            platform: win32
+            builder: --win --x64
+            artifacts: dist/*.exe
+          - name: Linux x64
+            slug: linux-x64
+            os: ubuntu-latest
+            arch: x64
+            platform: linux
+            builder: --linux --x64
+            artifacts: |
+              dist/*.AppImage
+              dist/*.deb
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # ffmpeg-static downloads exactly one binary at install time, chosen by
+      # npm_config_arch/npm_config_platform (falling back to the host's
+      # os.arch()/os.platform() if unset) — see node_modules/ffmpeg-static/install.js.
+      # A bare `npm ci` above fetches the *runner's* arch, which is wrong
+      # whenever matrix.arch cross-builds (macOS x64 on this arm64 runner):
+      # the app would install and launch fine, then fail every transcode
+      # silently. Force a reinstall pinned to the arch we're packaging for.
+      # install.js skips its download if a binary already sits at the target
+      # path, so the one `npm ci` just fetched has to be removed first.
+      - name: Install the ${{ matrix.arch }} ffmpeg-static binary
+        shell: bash
+        run: |
+          rm -f node_modules/ffmpeg-static/ffmpeg node_modules/ffmpeg-static/ffmpeg.exe \
+                node_modules/ffmpeg-static/ffmpeg.LICENSE node_modules/ffmpeg-static/ffmpeg.README
+          npm rebuild ffmpeg-static
+        env:
+          npm_config_arch: ${{ matrix.arch }}
+          npm_config_platform: ${{ matrix.platform }}
+
+      - run: cmake --version
+
+      - name: Read whisper.cpp tag
+        id: manifest
+        shell: bash
+        run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
+
+      # Same convention as ci.yml's integration and e2e jobs, plus the arch:
+      # both macOS jobs run on the same runner.os and build different binaries
+      # into the same `resources/` path, so the tag alone would collide. For
+      # the Linux x64 leg specifically this key is identical to ci.yml's
+      # `${{ runner.os }}-whisper-<tag>-x64` — deliberate, so a push that
+      # already primed CI's cache doesn't pay to rebuild whisper.cpp again here.
+      - name: Cache compiled whisper binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/
+            .cache/whisper.cpp
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-${{ matrix.arch }}
+
+      - name: Build whisper.cpp for ${{ matrix.arch }}
+        run: npm run setup
+        env:
+          WHISPER_DROP_TARGET_ARCH: ${{ matrix.arch }}
+
+      # electron-builder only warns when an extraResources source is missing,
+      # which would ship an installer that cannot transcribe. Fail here
+      # instead — for whisper-cli (existence only; npm run setup always
+      # compiles for the arch it's asked for) and for ffmpeg-static
+      # (existence *and* architecture, since its binary is downloaded, not
+      # compiled, and the previous step's reinstall is what this proves
+      # actually worked).
+      - name: Verify the platform-matched whisper-cli and ffmpeg exist
+        shell: bash
+        run: node scripts/verify-release-binaries.mjs
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+
+      - run: npm run build
+
+      - name: Package
+        shell: bash
+        run: npx electron-builder ${{ matrix.builder }} --publish never
+        env:
+          # Belt and braces alongside `mac.identity: null`: never pick up a
+          # Developer ID that happens to be on the machine.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      # Artifact upload is deliberately disabled, not merely unfinished.
+      #
+      # The `ffmpeg-static` binary this app bundles is built `--enable-nonfree` (see the
+      # "Licenses" section of the README) and FFmpeg's own terms say a binary built that
+      # way must not be redistributed. This is a public repo, so a GitHub Actions
+      # workflow-run artifact does not stay internal the way build output on a private
+      # CI runner would — anyone can download it the moment it exists. Uploading here on
+      # every `v*` tag or manual dispatch would recreate the exact distribution the
+      # README says isn't safe yet, regardless of whether a GitHub Release is ever cut.
+      #
+      # Do not re-enable this step until that's resolved — either by bundling an
+      # LGPL-only ffmpeg build (one without `--enable-nonfree`), or by dropping the
+      # bundled ffmpeg entirely and requiring a system install. See "Before publishing
+      # releases" in the README for the full option writeup. Everything above this
+      # point — dependency install with the arch pin, the whisper.cpp build, the
+      # electron-builder package step, and the binary verification step — still runs and
+      # still fails the job loudly if packaging breaks; only the upload is gone.
+      #
+      # Restore verbatim when it's time to re-enable:
+      #
+      # - uses: actions/upload-artifact@v4
+      #   with:
+      #     name: whisper-drop-${{ matrix.slug }}
+      #     path: ${{ matrix.artifacts }}
+      #     if-no-files-found: error
+      #     retention-days: 14

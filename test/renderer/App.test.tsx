@@ -204,4 +204,17 @@ describe('App', () => {
       expect(screen.getByTestId('transcript').textContent).toContain('Second try worked.'),
     )
   })
+
+  it('the Licenses button in the header opens the Licenses dialog, and Close dismisses it', async () => {
+    installFakeApi({ models: { list: vi.fn(async () => readyModels()) } as never })
+
+    render(<App />)
+    await waitForReady()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Licenses' }))
+    expect(screen.getByRole('dialog', { name: 'Licenses' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
 })

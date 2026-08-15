@@ -3,6 +3,7 @@ import { Done } from './components/Done.js'
 import { DropZone } from './components/DropZone.js'
 import { ErrorView } from './components/ErrorView.js'
 import { Header } from './components/Header.js'
+import { Licenses } from './components/Licenses.js'
 import { ModelPicker } from './components/ModelPicker.js'
 import { Toast } from './components/Toast.js'
 import { Working } from './components/Working.js'
@@ -229,6 +230,7 @@ export function App() {
         onOpenPicker={() => dispatch({ type: 'picker-opened' })}
         onToggleEnglishOnly={(value) => void setEnglishOnly(value)}
         onLanguageChange={(value) => void setLanguage(value)}
+        onOpenLicenses={() => dispatch({ type: 'licenses-opened' })}
       />
 
       <main className="app-main">
@@ -311,6 +313,10 @@ export function App() {
           onReveal={(path) => void reveal(path)}
           onDismiss={() => dispatch({ type: 'toast-dismissed' })}
         />
+      )}
+
+      {state.licensesOpen && (
+        <Licenses onClose={() => dispatch({ type: 'licenses-closed' })} />
       )}
     </div>
   )

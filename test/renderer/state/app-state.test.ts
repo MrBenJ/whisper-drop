@@ -123,6 +123,19 @@ describe('viewFor', () => {
     expect(state.pickerOpen).toBe(true)
     expect(viewFor(state)).toBe('idle')
   })
+
+  it('is not one of the five states for licenses either — same overlay treatment', () => {
+    const state = run([{ type: 'licenses-opened' }], READY)
+
+    expect(state.licensesOpen).toBe(true)
+    expect(viewFor(state)).toBe('idle')
+  })
+
+  it('licenses-closed clears licensesOpen', () => {
+    const state = run([{ type: 'licenses-opened' }, { type: 'licenses-closed' }], READY)
+
+    expect(state.licensesOpen).toBe(false)
+  })
 })
 
 describe('the English-only toggle', () => {

@@ -205,6 +205,21 @@ select {
   transform: translateX(14px);
 }
 
+.licenses-button {
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.licenses-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ---------- Main / shared ---------- */
 
 .app-main {
@@ -621,6 +636,116 @@ select {
 .model-row-cancel:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* ---------- Licenses ---------- */
+
+.licenses-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: var(--overlay-scrim);
+  z-index: 10;
+}
+
+.licenses {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  width: min(560px, 100%);
+  max-height: min(640px, 88vh);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  box-shadow: var(--shadow-card);
+  overflow-y: auto;
+}
+
+.licenses:focus {
+  outline: none;
+}
+
+.licenses-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.licenses-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.licenses-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  line-height: 1;
+  font-size: 18px;
+  background: transparent;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: var(--ink-muted);
+}
+
+.licenses-close:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.licenses-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.licenses-item {
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.licenses-item-heading {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.licenses-item-name {
+  font-weight: 600;
+}
+
+.licenses-item-version,
+.licenses-item-license {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-muted);
+}
+
+.licenses-item-note {
+  margin: var(--space-1) 0 0;
+  font-size: 13px;
+  color: var(--ink-muted);
+}
+
+.licenses-item-url {
+  margin: var(--space-1) 0 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-muted);
+  word-break: break-all;
+  user-select: text;
 }
 
 /* ---------- Done ---------- */

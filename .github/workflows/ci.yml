@@ -34,14 +34,16 @@ jobs:
         run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
 
       # Keyed on the whisper.cpp tag so a manifest bump invalidates the cache and rebuilds;
-      # otherwise a cache hit skips the multi-minute cmake build entirely.
+      # otherwise a cache hit skips the multi-minute cmake build entirely. This key is
+      # deliberately identical to release.yml's Linux x64 leg's key — intentional sharing,
+      # not a collision, so whichever workflow runs first primes the cache for the other.
       - name: Cache compiled whisper binary
         uses: actions/cache@v4
         with:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
 
       # Keyed on the model filename, not its contents, since fetch-test-model.mjs
       # already verifies the download against a pinned checksum.
@@ -78,7 +80,7 @@ jobs:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
 
       - name: Cache test model
         uses: actions/cache@v4
