@@ -1,0 +1,117 @@
+name: Release build
+
+# Separate from ci.yml on purpose: different triggers, different runtimes, and
+# a failure here means "no artifact", not "the code is broken".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+# Nothing is published and no release is created. Artifacts are attached to the
+# workflow run for a human to download, test, and release deliberately.
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # One platform failing must not hide whether the others build.
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS arm64
+            slug: mac-arm64
+            os: macos-latest
+            arch: arm64
+            builder: --mac --arm64
+            artifacts: dist/*.dmg
+          # Cross-built from the same arm64 runner: whisper.cpp via
+          # CMAKE_OSX_ARCHITECTURES, Electron because electron-builder
+          # downloads the x64 runtime it is asked for.
+          - name: macOS x64
+            slug: mac-x64
+            os: macos-latest
+            arch: x64
+            builder: --mac --x64
+            artifacts: dist/*.dmg
+          - name: Windows x64
+            slug: win-x64
+            os: windows-latest
+            arch: x64
+            builder: --win --x64
+            artifacts: dist/*.exe
+          - name: Linux x64
+            slug: linux-x64
+            os: ubuntu-latest
+            arch: x64
+            builder: --linux --x64
+            artifacts: |
+              dist/*.AppImage
+              dist/*.deb
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: cmake --version
+
+      - name: Read whisper.cpp tag
+        id: manifest
+        shell: bash
+        run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
+
+      # Same convention as ci.yml's integration and e2e jobs, plus the arch:
+      # both macOS jobs run on the same runner.os and build different binaries
+      # into the same `resources/` path, so the tag alone would collide.
+      - name: Cache compiled whisper binary
+        uses: actions/cache@v4
+        with:
+          path: |
+            resources/
+            .cache/whisper.cpp
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-${{ matrix.arch }}
+
+      - name: Build whisper.cpp for ${{ matrix.arch }}
+        run: npm run setup
+        env:
+          WHISPER_DROP_TARGET_ARCH: ${{ matrix.arch }}
+
+      # electron-builder only warns when an extraResources source is missing,
+      # which would ship an installer that cannot transcribe. Fail here instead.
+      - name: Verify the platform-matched whisper-cli exists
+        shell: bash
+        run: |
+          node -e "
+            const { existsSync } = require('node:fs')
+            const exe = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
+            const path = 'resources/' + process.platform + '-' + process.env.TARGET_ARCH + '/' + exe
+            if (!existsSync(path)) {
+              console.error('missing ' + path + ' — electron-builder would package an app that cannot transcribe')
+              process.exit(1)
+            }
+            console.log('found ' + path)
+          "
+        env:
+          TARGET_ARCH: ${{ matrix.arch }}
+
+      - run: npm run build
+
+      - name: Package
+        shell: bash
+        run: npx electron-builder ${{ matrix.builder }} --publish never
+        env:
+          # Belt and braces alongside `mac.identity: null`: never pick up a
+          # Developer ID that happens to be on the machine.
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-drop-${{ matrix.slug }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14

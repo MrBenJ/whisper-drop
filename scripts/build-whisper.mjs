@@ -40,7 +40,27 @@ const { whisperCppRepo, whisperCppTag } = JSON.parse(
   readFileSync(join(ROOT, 'whisper.manifest.json'), 'utf8'),
 )
 
-const target = `${process.platform}-${process.arch}`
+// The arch to build *for*, which is the host arch unless a release build asks
+// otherwise. macOS is the only platform we cross-build on: the release
+// workflow produces both an arm64 and an x64 DMG from one arm64 runner, and
+// `extraResources` picks the directory by name, so the name has to say which
+// arch the binary inside is.
+const targetArch = process.env.WHISPER_DROP_TARGET_ARCH ?? process.arch
+if (targetArch !== 'x64' && targetArch !== 'arm64') {
+  console.error(`WHISPER_DROP_TARGET_ARCH must be x64 or arm64, received ${targetArch}`)
+  process.exit(1)
+}
+if (targetArch !== process.arch && process.platform !== 'darwin') {
+  console.error(
+    `Cross-building whisper.cpp for ${targetArch} is only supported on macOS (host is ${process.platform}-${process.arch})`,
+  )
+  process.exit(1)
+}
+
+const target = `${process.platform}-${targetArch}`
+// A separate tree per cross-build so a stale CMake cache from the host arch
+// cannot leak in. The native case keeps using `build`, unchanged.
+const buildDir = targetArch === process.arch ? 'build' : `build-${targetArch}`
 const exe = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli'
 const outDir = join(ROOT, 'resources', target)
 const outBin = join(outDir, exe)
@@ -63,21 +83,24 @@ if (existsSync(join(src, '.git'))) {
 }
 
 const cmakeArgs = [
-  '-B', 'build',
+  '-B', buildDir,
   '-DCMAKE_BUILD_TYPE=Release',
   '-DBUILD_SHARED_LIBS=OFF',
   '-DWHISPER_BUILD_TESTS=OFF',
   '-DWHISPER_BUILD_EXAMPLES=ON',
   '-DWHISPER_BUILD_SERVER=OFF',
 ]
-if (process.platform === 'darwin') cmakeArgs.push('-DGGML_METAL_EMBED_LIBRARY=ON')
+if (process.platform === 'darwin') {
+  cmakeArgs.push('-DGGML_METAL_EMBED_LIBRARY=ON')
+  cmakeArgs.push(`-DCMAKE_OSX_ARCHITECTURES=${targetArch === 'x64' ? 'x86_64' : 'arm64'}`)
+}
 
 run('cmake', cmakeArgs, src)
-run('cmake', ['--build', 'build', '--config', 'Release', '-j'], src)
+run('cmake', ['--build', buildDir, '--config', 'Release', '-j'], src)
 
 const candidates = [
-  join(src, 'build', 'bin', exe),
-  join(src, 'build', 'bin', 'Release', exe),
+  join(src, buildDir, 'bin', exe),
+  join(src, buildDir, 'bin', 'Release', exe),
 ]
 const built = candidates.find((p) => existsSync(p))
 if (!built) {

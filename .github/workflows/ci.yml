@@ -41,7 +41,7 @@ jobs:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
 
       # Keyed on the model filename, not its contents, since fetch-test-model.mjs
       # already verifies the download against a pinned checksum.
@@ -78,7 +78,7 @@ jobs:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
 
       - name: Cache test model
         uses: actions/cache@v4
