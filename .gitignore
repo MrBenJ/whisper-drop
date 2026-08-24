@@ -3,4 +3,5 @@ resources/
 .cache/
 dist/
 out/
+.worktrees/
 .DS_Store
