@@ -61,6 +61,7 @@ async function registerAllHandlers(): Promise<void> {
         englishOnly: false,
         activeModel: null,
         language: 'auto',
+        theme: 'system',
         throughput: {},
       }),
       set: async () => ({
@@ -68,6 +69,7 @@ async function registerAllHandlers(): Promise<void> {
         englishOnly: false,
         activeModel: null,
         language: 'auto',
+        theme: 'system',
         throughput: {},
       }),
     },

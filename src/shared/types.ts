@@ -78,12 +78,19 @@ export type DownloadProgress = {
   bytesPerSecond: number
 }
 
+/** Iterable form, so validation and the header's select stay in step. */
+export const THEMES = ['system', 'light', 'dark'] as const
+
+export type Theme = (typeof THEMES)[number]
+
 export type Settings = {
   version: 1
   englishOnly: boolean
   activeModel: ModelBaseId | null
   /** ISO 639-1 code, or 'auto'. Ignored while englishOnly. */
   language: string
+  /** 'system' follows the OS appearance; the other two are explicit choices. */
+  theme: Theme
   throughput: Partial<Record<ModelId, { realtimeFactor: number; samples: number }>>
 }
 

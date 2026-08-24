@@ -1,4 +1,4 @@
-import type { ModelBaseId, Settings } from '../../shared/types.js'
+import { THEMES, type ModelBaseId, type Settings, type Theme } from '../../shared/types.js'
 import { MODEL_BASE_ORDER } from '../models/catalog.js'
 import { IpcError } from './errors.js'
 
@@ -15,7 +15,7 @@ export type SettingsHandlers = {
 /** 'auto', or an ISO 639-1 code. Reaches whisper-cli as an argv element. */
 const LANGUAGE = /^([a-z]{2}|auto)$/
 
-const WRITABLE_KEYS = new Set(['englishOnly', 'activeModel', 'language'])
+const WRITABLE_KEYS = new Set(['englishOnly', 'activeModel', 'language', 'theme'])
 
 function reject(detail: string): never {
   throw new IpcError('INVALID_REQUEST', 'That settings change was not understood.', detail)
@@ -55,6 +55,13 @@ export function createSettingsHandlers(deps: SettingsDeps): SettingsHandlers {
           reject(`language must be 'auto' or an ISO 639-1 code, received ${JSON.stringify(value)}`)
         }
         clean.language = value
+      }
+
+      if (key === 'theme') {
+        if (!(THEMES as readonly unknown[]).includes(value)) {
+          reject(`theme must be one of ${THEMES.join(', ')}, received ${JSON.stringify(value)}`)
+        }
+        clean.theme = value as Theme
       }
     }
 
