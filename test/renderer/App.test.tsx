@@ -205,6 +205,23 @@ describe('App', () => {
     )
   })
 
+  it('the Theme control pins the theme on <html>, and Auto hands it back to the OS', async () => {
+    const fake = installFakeApi({ models: { list: vi.fn(async () => readyModels()) } as never })
+
+    render(<App />)
+    await waitForReady()
+
+    // Default: nothing stamped, so the stylesheet follows prefers-color-scheme.
+    expect(document.documentElement.dataset.theme).toBeUndefined()
+
+    fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'dark' } })
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe('dark'))
+    expect(fake.api.settings.set).toHaveBeenCalledWith({ theme: 'dark' })
+
+    fireEvent.change(screen.getByLabelText('Theme'), { target: { value: 'system' } })
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBeUndefined())
+  })
+
   it('the Licenses button in the header opens the Licenses dialog, and Close dismisses it', async () => {
     installFakeApi({ models: { list: vi.fn(async () => readyModels()) } as never })
 

@@ -1,7 +1,7 @@
 import { useState, type DragEvent, type KeyboardEvent } from 'react'
 
 const ONE_AT_A_TIME_MESSAGE =
-  'whisper-drop handles one file at a time for now — using the first.'
+  'whisper-drop handles one file at a time for now, so only the first was used.'
 const DEFAULT_DISABLED_REASON = 'Waiting for the model to finish downloading'
 
 type DropZoneProps = {

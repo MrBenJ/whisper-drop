@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import type { Settings } from '../shared/types.js'
+import { THEMES, type Settings, type Theme } from '../shared/types.js'
 import { CATALOG, MODEL_BASE_ORDER, type ModelBaseId, type ModelId } from './models/catalog.js'
 
 const CURRENT_VERSION = 1 as const
@@ -15,6 +15,7 @@ export function defaultSettings(locale: string): Settings {
     englishOnly: locale.toLowerCase().startsWith('en'),
     activeModel: null,
     language: 'auto',
+    theme: 'system',
     throughput: {},
   }
 }
@@ -55,6 +56,9 @@ function coerceSettings(parsed: Record<string, unknown>, fallback: Settings): Se
     englishOnly: typeof parsed.englishOnly === 'boolean' ? parsed.englishOnly : fallback.englishOnly,
     activeModel: coerceActiveModel(parsed.activeModel),
     language: typeof parsed.language === 'string' ? parsed.language : fallback.language,
+    theme: (THEMES as readonly unknown[]).includes(parsed.theme)
+      ? (parsed.theme as Theme)
+      : fallback.theme,
     throughput: coerceThroughput(parsed.throughput),
   }
 }

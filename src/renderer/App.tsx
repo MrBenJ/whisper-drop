@@ -8,7 +8,7 @@ import { ModelPicker } from './components/ModelPicker.js'
 import { Toast } from './components/Toast.js'
 import { Working } from './components/Working.js'
 import { asIpcFailure, presentError } from './errors.js'
-import type { ExportFormat, ModelBaseId } from '../shared/types.js'
+import type { ExportFormat, ModelBaseId, Theme } from '../shared/types.js'
 import { activeRow, INITIAL_STATE, reduce, viewFor } from './state/app-state.js'
 
 export function App() {
@@ -114,6 +114,24 @@ export function App() {
       dispatch({ type: 'failed', error: asIpcFailure(cause) })
     }
   }, [])
+
+  const setTheme = useCallback(async (theme: Theme) => {
+    try {
+      const settings = await window.whisperDrop.settings.set({ theme })
+      dispatch({ type: 'settings-changed', settings })
+    } catch (cause) {
+      dispatch({ type: 'failed', error: asIpcFailure(cause) })
+    }
+  }, [])
+
+  // The stylesheet's tokens key off data-theme on <html>: absent means follow
+  // the OS, 'light'/'dark' pin it. Applied as an effect of settings so a
+  // persisted choice takes hold on launch, not only when toggled.
+  const theme = state.settings?.theme ?? 'system'
+  useEffect(() => {
+    if (theme === 'system') delete document.documentElement.dataset.theme
+    else document.documentElement.dataset.theme = theme
+  }, [theme])
 
   const chooseModel = useCallback(async (base: ModelBaseId) => {
     try {
@@ -230,6 +248,7 @@ export function App() {
         onOpenPicker={() => dispatch({ type: 'picker-opened' })}
         onToggleEnglishOnly={(value) => void setEnglishOnly(value)}
         onLanguageChange={(value) => void setLanguage(value)}
+        onThemeChange={(value) => void setTheme(value)}
         onOpenLicenses={() => dispatch({ type: 'licenses-opened' })}
       />
 

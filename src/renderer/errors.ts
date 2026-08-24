@@ -15,7 +15,7 @@ type Entry = { fallbackTitle: string; suggestion: string; action: ErrorAction }
 const TABLE: Record<IpcErrorCode, Entry> = {
   NO_AUDIO_STREAM: {
     fallbackTitle: "This file doesn't contain any audio.",
-    suggestion: 'Try a different file — a video with no audio track has nothing to transcribe.',
+    suggestion: 'Try a different file. A video with no audio track has nothing to transcribe.',
     action: 'dismiss',
   },
   UNREADABLE_MEDIA: {

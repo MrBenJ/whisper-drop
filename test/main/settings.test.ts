@@ -35,6 +35,10 @@ describe('defaultSettings', () => {
     expect(settings.throughput).toEqual({})
     expect(settings.version).toBe(1)
   })
+
+  it('starts following the OS appearance', () => {
+    expect(defaultSettings('en-US').theme).toBe('system')
+  })
 })
 
 describe('createSettingsStore', () => {
@@ -196,6 +200,22 @@ describe('reading malformed but structurally-valid JSON', () => {
     )
     const settings = await createSettingsStore(dir, 'en-US').read()
     expect(settings.throughput).toEqual({ base: { realtimeFactor: 12, samples: 3 } })
+  })
+
+  it('falls back to system for a theme that is not a known value', async () => {
+    await writeFile(
+      join(dir, 'settings.json'),
+      JSON.stringify({ version: 1, theme: 'sepia' }),
+      'utf8',
+    )
+    const store = createSettingsStore(dir, 'en-US')
+    expect((await store.read()).theme).toBe('system')
+  })
+
+  it('round-trips an explicit theme choice', async () => {
+    const store = createSettingsStore(dir, 'en-US')
+    await store.write({ theme: 'dark' })
+    expect((await store.read()).theme).toBe('dark')
   })
 
   it('falls back to the locale default when englishOnly is not a boolean', async () => {

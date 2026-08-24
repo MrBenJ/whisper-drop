@@ -30,7 +30,7 @@ function resolveRendererUrl(options: WindowOptions): string | undefined {
 
   if (options.isPackaged) {
     throw new Error(
-      `refusing to load rendererUrl "${options.rendererUrl}" in a packaged build — a packaged app must always load the built file`,
+      `refusing to load rendererUrl "${options.rendererUrl}" in a packaged build: a packaged app must always load the built file`,
     )
   }
 

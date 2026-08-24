@@ -1,33 +1,87 @@
-/* whisper-drop — visual system
+/* whisper-drop visual system
  *
- * Direction: an audio-engineer's instrument, not a generic app shell. Warm
- * paper/graphite surfaces, a single brass/amber signal color reserved for
- * things that are actually active (drag-hover, progress, focus), and a
- * monospace face for anything that's a reading — durations, percentages,
- * ETAs — the way a tape counter or a meter reads out. No webfonts, no
- * framework: everything below is the system font stack and hand-written CSS.
+ * Direction: an audio-engineer's instrument in Human Balance AI's brand
+ * palette. Paper and ink surfaces from the brand book, one slate-blue signal
+ * color reserved for things that are actually active (drag-hover, progress,
+ * focus), and a monospace face for anything that's a reading (durations,
+ * percentages, ETAs) the way a tape counter or a meter reads out.
+ *
+ * Type is the brand pair: Josefin Sans for headings, Lato for everything
+ * else. Both are bundled locally as woff2 (SIL OFL 1.1, credited in the
+ * Licenses screen); the renderer still fetches nothing from the network.
+ *
+ * Theming: three states. Explicit choice stamps data-theme="light" or
+ * "dark" on <html>; the default follows the OS via prefers-color-scheme.
+ * Light tokens live on bare :root, dark tokens are defined twice, once for
+ * each way dark can win. Every color in the app comes through these tokens.
  */
+
+@font-face {
+  font-family: 'Josefin Sans';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('./assets/fonts/josefin-sans-600.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Josefin Sans';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/josefin-sans-700.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Lato';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/lato-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Lato';
+  font-style: italic;
+  font-weight: 400;
+  font-display: swap;
+  src: url('./assets/fonts/lato-400-italic.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Lato';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('./assets/fonts/lato-700.woff2') format('woff2');
+}
+
+/* Brand palette (Human Balance Brand Guidebook v2):
+ *   primary dark #5b7a8a, secondary dark #2e2e29,
+ *   primary light #e8e3d9, secondary light #f4f1ea.
+ * The guidebook's own contrast table marks #5b7a8a on the light papers as
+ * large-text-only, so small accent-colored text uses --accent-text, a
+ * darkened (light mode) or lightened (dark mode) slate that passes AA. */
 
 :root {
   color-scheme: light;
 
-  --paper: #f5f2ea;
-  --ink: #201e19;
-  --ink-muted: #6d6555;
-  --hairline: #ddd5c3;
-  --surface: #ffffff;
-  --accent: #b96f1f;
-  --accent-ink: #fffaf1;
-  --focus-ring: #8a5116;
+  --paper: #e8e3d9;
+  --ink: #2e2e29;
+  --ink-muted: #5f5c50;
+  --hairline: #d2cbbb;
+  --surface: #f4f1ea;
+  --accent: #5b7a8a;
+  --accent-text: #44606e;
+  --accent-ink: #ffffff;
+  --focus-ring: #44606e;
 
   --font-ui:
-    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-display:
+    'Josefin Sans', 'Lato', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono:
     ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  /* Reserved for the transcript alone — long-form reading gets a different
-   * rhythm than UI chrome, the way a printed transcript reads differently
-   * from the machine's own readouts. Still a system stack, no webfonts. */
-  --font-serif: Charter, 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   --space-1: 4px;
   --space-2: 8px;
@@ -36,26 +90,48 @@
   --space-5: 40px;
   --radius: 4px;
 
-  --overlay-scrim: rgba(20, 17, 10, 0.5);
-  --shadow-card: 0 16px 40px rgba(20, 17, 10, 0.28);
+  --overlay-scrim: rgba(46, 46, 41, 0.5);
+  --shadow-card: 0 16px 40px rgba(46, 46, 41, 0.25);
 }
 
+/* Dark tokens, first way dark wins: the OS is dark and the user hasn't
+ * explicitly chosen light. Keep in step with the [data-theme='dark'] block
+ * below; they must stay identical. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     color-scheme: dark;
 
-    --paper: #17150f;
-    --ink: #ece6d8;
-    --ink-muted: #9c9384;
-    --hairline: #37332a;
-    --surface: #1f1c15;
-    --accent: #dd9a4b;
-    --accent-ink: #1a1409;
-    --focus-ring: #dd9a4b;
+    --paper: #24241f;
+    --ink: #e8e3d9;
+    --ink-muted: #a9a294;
+    --hairline: #44443b;
+    --surface: #2e2e29;
+    --accent: #8aa7b6;
+    --accent-text: #8aa7b6;
+    --accent-ink: #24241f;
+    --focus-ring: #8aa7b6;
 
     --overlay-scrim: rgba(0, 0, 0, 0.6);
     --shadow-card: 0 16px 40px rgba(0, 0, 0, 0.5);
   }
+}
+
+/* Dark tokens, second way dark wins: the user explicitly chose dark. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --paper: #24241f;
+  --ink: #e8e3d9;
+  --ink-muted: #a9a294;
+  --hairline: #44443b;
+  --surface: #2e2e29;
+  --accent: #8aa7b6;
+  --accent-text: #8aa7b6;
+  --accent-ink: #24241f;
+  --focus-ring: #8aa7b6;
+
+  --overlay-scrim: rgba(0, 0, 0, 0.6);
+  --shadow-card: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -106,7 +182,7 @@ select {
   gap: var(--space-4);
   padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--hairline);
-  /* Electron's native titlebar sits above this in v1 — no drag region needed here. */
+  /* Electron's native titlebar sits above this in v1; no drag region needed here. */
 }
 
 .model-button {
@@ -146,7 +222,8 @@ select {
   gap: var(--space-4);
 }
 
-.language-control {
+.language-control,
+.theme-control {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -154,7 +231,8 @@ select {
   color: var(--ink-muted);
 }
 
-.language-control select {
+.language-control select,
+.theme-control select {
   background: var(--surface);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
@@ -217,7 +295,7 @@ select {
 
 .licenses-button:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ---------- Main / shared ---------- */
@@ -266,12 +344,15 @@ select {
 
 .drop-zone-prompt {
   margin: 0;
-  font-size: 16px;
+  font-family: var(--font-display);
+  font-size: 18px;
   font-weight: 600;
   color: var(--ink);
 }
 
 .drop-zone--disabled .drop-zone-prompt {
+  font-family: var(--font-ui);
+  font-size: 16px;
   font-weight: 400;
   color: var(--ink-muted);
   max-width: 32ch;
@@ -287,7 +368,7 @@ select {
 .drop-zone-warning {
   margin: var(--space-2) 0 0;
   font-size: 12px;
-  color: var(--accent);
+  color: var(--accent-text);
   max-width: 36ch;
   text-align: center;
 }
@@ -295,6 +376,9 @@ select {
 .browse-button {
   padding: var(--space-2) var(--space-4);
   background: var(--surface);
+  /* Not `inherit`: the drop zone around it sits in muted ink, and a button
+   * label is an action, not ambience. */
+  color: var(--ink);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
   cursor: pointer;
@@ -328,7 +412,8 @@ select {
 }
 
 .working-filename {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 19px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -357,8 +442,8 @@ select {
   gap: var(--space-3);
 }
 
-/* The signature element: a segmented level meter, not a smooth gradient bar —
- * ticks read like an analog VU meter rather than a generic web progress bar. */
+/* The signature element: a segmented level meter, not a smooth gradient bar.
+ * Ticks read like an analog VU meter rather than a generic web progress bar. */
 .progress-track {
   flex: 1 1 auto;
   height: 10px;
@@ -405,7 +490,7 @@ select {
 
 .cancel-button:hover:not(:disabled) {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .cancel-button:disabled {
@@ -425,7 +510,10 @@ select {
 
 .first-run .model-picker {
   flex: 0 0 auto;
-  margin: var(--space-4) var(--space-4) 0;
+  /* Centered: the picker is the first thing a new install shows, and a
+   * left-hugging card in a wide window reads as a layout accident. */
+  margin: var(--space-4) auto 0;
+  width: min(560px, calc(100% - var(--space-4) * 2));
 }
 
 .first-run .drop-zone {
@@ -475,7 +563,8 @@ select {
 
 .model-picker-title {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
 }
 
@@ -494,7 +583,7 @@ select {
 
 .model-picker-close:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .model-picker-tradeoff {
@@ -526,11 +615,12 @@ select {
   padding: var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: 6px;
+  background: var(--paper);
 }
 
 .model-row-item[aria-current='true'] {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--paper));
 }
 
 .model-row {
@@ -554,7 +644,7 @@ select {
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .model-row-size {
@@ -635,7 +725,7 @@ select {
 .model-row-remove:hover,
 .model-row-cancel:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ---------- Licenses ---------- */
@@ -678,7 +768,8 @@ select {
 
 .licenses-title {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
 }
 
@@ -697,7 +788,7 @@ select {
 
 .licenses-close:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .licenses-list {
@@ -713,6 +804,7 @@ select {
   padding: var(--space-3);
   border: 1px solid var(--hairline);
   border-radius: 6px;
+  background: var(--paper);
 }
 
 .licenses-item-heading {
@@ -770,7 +862,8 @@ select {
 }
 
 .done-filename {
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 19px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -784,17 +877,16 @@ select {
   flex: 0 0 auto;
 }
 
-/* The one place typography is for reading rather than instrumentation — a
- * serif face, a measure, and paragraph spacing tuned like a printed page
- * rather than a UI panel. */
+/* The one place typography is for reading rather than instrumentation: the
+ * brand body face at a book size, a measure, and paragraph spacing tuned
+ * like a printed page rather than a UI panel. */
 .transcript {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-4) 0;
   border-top: 1px solid var(--hairline);
-  font-family: var(--font-serif);
-  font-size: 17px;
+  font-size: 16px;
   line-height: 1.75;
 }
 
@@ -857,7 +949,7 @@ select {
 }
 
 .done-reset:hover {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 /* ---------- Toast ---------- */
@@ -919,7 +1011,8 @@ select {
 
 .error-title {
   margin: 0;
-  font-size: 18px;
+  font-family: var(--font-display);
+  font-size: 20px;
   font-weight: 600;
 }
 
@@ -955,7 +1048,7 @@ select {
 
 .error-dismiss:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .error-details summary {
@@ -990,7 +1083,7 @@ select {
 
 .error-copy-details:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 
 .error-copied-note {

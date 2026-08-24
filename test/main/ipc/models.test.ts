@@ -7,6 +7,7 @@ const SETTINGS: Settings = {
   englishOnly: false,
   activeModel: 'base',
   language: 'auto',
+  theme: 'system',
   throughput: {},
 }
 

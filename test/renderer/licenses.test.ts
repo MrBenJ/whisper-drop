@@ -11,6 +11,8 @@ describe('the licence data', () => {
       'FFmpeg (ffmpeg and ffprobe)',
       'Electron',
       'React',
+      'Lato',
+      'Josefin Sans',
     ])
   })
 

@@ -7,6 +7,7 @@ const SETTINGS: Settings = {
   englishOnly: false,
   activeModel: 'base',
   language: 'auto',
+  theme: 'system',
   throughput: { base: { realtimeFactor: 9, samples: 2 } },
 }
 
@@ -49,6 +50,25 @@ describe('settings.set', () => {
 
     expect(write).toHaveBeenNthCalledWith(1, { language: 'fr' })
     expect(write).toHaveBeenNthCalledWith(2, { language: 'auto' })
+  })
+
+  it('writes each of the three themes', async () => {
+    const { handlers, write } = harness()
+    await handlers.set({ theme: 'dark' })
+    await handlers.set({ theme: 'light' })
+    await handlers.set({ theme: 'system' })
+    expect(write).toHaveBeenNthCalledWith(1, { theme: 'dark' })
+    expect(write).toHaveBeenNthCalledWith(2, { theme: 'light' })
+    expect(write).toHaveBeenNthCalledWith(3, { theme: 'system' })
+  })
+
+  it('rejects a theme outside the three known values', async () => {
+    const { handlers, write } = harness()
+    await expect(handlers.set({ theme: 'sepia' })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    await expect(handlers.set({ theme: true })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(write).not.toHaveBeenCalled()
   })
 
   it('rejects a patch that is not a plain object', async () => {

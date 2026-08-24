@@ -59,7 +59,7 @@ describe('DropZone', () => {
     })
 
     expect(
-      screen.getByText('whisper-drop handles one file at a time for now — using the first.'),
+      screen.getByText('whisper-drop handles one file at a time for now, so only the first was used.'),
     ).toBeTruthy()
   })
 

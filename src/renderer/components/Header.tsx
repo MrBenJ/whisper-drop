@@ -1,5 +1,5 @@
 import type { ModelRow } from '../../shared/ipc.js'
-import type { Settings } from '../../shared/types.js'
+import type { Settings, Theme } from '../../shared/types.js'
 
 /** Common enough to ship as defaults; the full catalog is whatever whisper.cpp supports. */
 const LANGUAGE_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
@@ -24,6 +24,7 @@ type HeaderProps = {
   onOpenPicker: () => void
   onToggleEnglishOnly: (englishOnly: boolean) => void
   onLanguageChange: (language: string) => void
+  onThemeChange: (theme: Theme) => void
   onOpenLicenses: () => void
 }
 
@@ -33,6 +34,7 @@ export function Header({
   onOpenPicker,
   onToggleEnglishOnly,
   onLanguageChange,
+  onThemeChange,
   onOpenLicenses,
 }: HeaderProps) {
   const modelLabel = activeRow?.resolved.label ?? 'Choose a model'
@@ -78,6 +80,18 @@ export function Header({
             checked={englishOnly}
             onChange={(event) => onToggleEnglishOnly(event.target.checked)}
           />
+        </label>
+
+        <label className="theme-control">
+          <span>Theme</span>
+          <select
+            value={settings?.theme ?? 'system'}
+            onChange={(event) => onThemeChange(event.target.value as Theme)}
+          >
+            <option value="system">Auto</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
         </label>
 
         <button type="button" className="licenses-button" onClick={onOpenLicenses}>

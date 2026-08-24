@@ -179,7 +179,7 @@ describe('ModelPicker', () => {
     expect(document.querySelectorAll('.model-row-note')).toHaveLength(2)
     expect(
       screen.getAllByText(
-        'No English-only weights exist above small — these stay multilingual, and are still the most accurate option for English.',
+        'No English-only weights exist above small. These stay multilingual, and are still the most accurate option for English.',
       ),
     ).toHaveLength(2)
   })

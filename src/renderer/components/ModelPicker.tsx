@@ -21,7 +21,7 @@ type ModelPickerProps = {
 // leaves these two rows exactly as they were — and says so, rather than
 // looking inert.
 const NO_PARTIAL_SWAP_NOTE =
-  'No English-only weights exist above small — these stay multilingual, and are still the most accurate option for English.'
+  'No English-only weights exist above small. These stay multilingual, and are still the most accurate option for English.'
 const NO_PARTIAL_SWAP_BASES: ReadonlySet<ModelBaseId> = new Set(['large-v3-turbo', 'large-v3'])
 
 export function ModelPicker({
@@ -115,7 +115,7 @@ export function ModelPicker({
 
       <p className="model-picker-tradeoff">
         Bigger models catch more of what's said but take longer per minute of audio. Start with
-        whatever downloads fastest — you can switch models any time without losing a download.
+        whatever downloads fastest. You can switch models any time without losing a download.
       </p>
 
       <label className="switch-control model-picker-toggle">
