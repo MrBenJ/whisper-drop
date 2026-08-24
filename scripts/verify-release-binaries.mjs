@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Guards the release workflow against packaging a binary built for the wrong
-// architecture. Two binaries are checked:
+// architecture. Three binaries are checked:
 //
 //   - whisper-cli, which `npm run setup` cross-compiles into
 //     resources/<platform>-<arch>/ for the arch the release job asks for.
@@ -12,8 +12,10 @@
 //     fails silently (`spawn … EBADARCH`). See the "Install the ${arch}
 //     ffmpeg-static binary" step in release.yml for the fix; this step is
 //     what proves that fix actually worked, instead of trusting it.
+//   - the @derhuerst/ffprobe-static binary, which follows the same one-binary
+//     install model and must be rebuilt for cross-architecture release legs.
 //
-// Existence alone isn't enough for either binary — both must match
+// Existence alone isn't enough for any binary — all three must match
 // TARGET_ARCH specifically, or this fails loudly in CI instead of quietly in
 // a client's hands.
 import { existsSync, readFileSync } from 'node:fs'
@@ -42,29 +44,38 @@ if (!existsSync(cliPath)) {
   console.log(`found ${cliPath}`)
 }
 
-// --- ffmpeg-static: same "missing file" failure mode, plus the silent
-// wrong-arch failure mode described above. ---
+// --- Downloaded media binaries: same "missing file" failure mode, plus the
+// silent wrong-arch failure mode described above. ---
 const ffmpegExe = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
 const ffmpegPath = `node_modules/ffmpeg-static/${ffmpegExe}`
-if (!existsSync(ffmpegPath)) {
-  fail(`missing ${ffmpegPath} — ffmpeg-static did not install a binary`)
-} else {
-  try {
-    const detected = detectArch(platform, readFileSync(ffmpegPath))
-    if (detected !== arch) {
-      fail(
-        `${ffmpegPath} is built for ${detected}, expected ${arch} — the wrong ` +
-          `ffmpeg-static binary was installed and every transcode in this build would fail`,
-      )
-    } else {
-      console.log(`confirmed ${ffmpegPath} is ${detected}`)
-    }
-  } catch (err) {
-    fail(`could not determine ${ffmpegPath}'s architecture: ${err.message}`)
-  }
-}
+const ffprobeExe = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+const ffprobePath = `node_modules/@derhuerst/ffprobe-static/${ffprobeExe}`
+
+verifyDownloadedBinary(ffmpegPath, 'ffmpeg-static', 'transcode')
+verifyDownloadedBinary(ffprobePath, '@derhuerst/ffprobe-static', 'media probe')
 
 if (failed) process.exit(1)
+
+function verifyDownloadedBinary(path, packageName, operation) {
+  if (!existsSync(path)) {
+    fail(`missing ${path} — ${packageName} did not install a binary`)
+    return
+  }
+
+  try {
+    const detected = detectArch(platform, readFileSync(path))
+    if (detected !== arch) {
+      fail(
+        `${path} is built for ${detected}, expected ${arch} — the wrong ` +
+          `${packageName} binary was installed and every ${operation} in this build would fail`,
+      )
+    } else {
+      console.log(`confirmed ${path} is ${detected}`)
+    }
+  } catch (err) {
+    fail(`could not determine ${path}'s architecture: ${err.message}`)
+  }
+}
 
 // Reads the executable header directly rather than shelling out to `file`/
 // `lipo`, so this works identically on macOS, Windows and Linux runners

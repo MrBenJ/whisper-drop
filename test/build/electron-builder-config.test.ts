@@ -38,8 +38,8 @@ describe('asar packing', () => {
     expect(CONFIG.asarUnpack).toContain('node_modules/ffmpeg-static/**')
   })
 
-  it('unpacks ffprobe-static, which is spawned as a child process', () => {
-    expect(CONFIG.asarUnpack).toContain('node_modules/ffprobe-static/**')
+  it('unpacks @derhuerst/ffprobe-static, which is spawned as a child process', () => {
+    expect(CONFIG.asarUnpack).toContain('node_modules/@derhuerst/ffprobe-static/**')
   })
 })
 

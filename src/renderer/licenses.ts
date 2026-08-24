@@ -36,7 +36,7 @@ export const LICENSES: readonly LicenseEntry[] = [
     // --enable-nonfree, i.e. a GPL/nonfree build, not LGPL.
     license: 'GPL-2.0-or-later, built with --enable-nonfree',
     url: 'https://ffmpeg.org/legal.html',
-    note: "Reads your file and converts its audio. Bundled via the ffmpeg-static and ffprobe-static packages and invoked as separate executables; this app links against no part of it. That answers the LGPL linking question, but not the fact that the bundled binary is a nonfree build: under ffmpeg's own terms, binaries built with --enable-nonfree may not be redistributed at all. That is why this repo does not publish release artifacts today (see \"Before publishing releases\" in the README).",
+    note: "Reads your file and converts its audio. Bundled via the ffmpeg-static and @derhuerst/ffprobe-static packages and invoked as separate executables; this app links against no part of it. That answers the LGPL linking question, but not the fact that the bundled binary is a nonfree build: under ffmpeg's own terms, binaries built with --enable-nonfree may not be redistributed at all. That is why this repo does not publish release artifacts today (see \"Before publishing releases\" in the README).",
   },
   {
     name: 'Electron',

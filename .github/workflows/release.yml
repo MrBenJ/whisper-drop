@@ -68,7 +68,7 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # ffmpeg-static downloads exactly one binary at install time, chosen by
+      # Both media packages download exactly one binary at install time, chosen by
       # npm_config_arch/npm_config_platform (falling back to the host's
       # os.arch()/os.platform() if unset) — see node_modules/ffmpeg-static/install.js.
       # A bare `npm ci` above fetches the *runner's* arch, which is wrong
@@ -77,12 +77,16 @@ jobs:
       # silently. Force a reinstall pinned to the arch we're packaging for.
       # install.js skips its download if a binary already sits at the target
       # path, so the one `npm ci` just fetched has to be removed first.
-      - name: Install the ${{ matrix.arch }} ffmpeg-static binary
+      - name: Install the ${{ matrix.arch }} ffmpeg and ffprobe binaries
         shell: bash
         run: |
           rm -f node_modules/ffmpeg-static/ffmpeg node_modules/ffmpeg-static/ffmpeg.exe \
                 node_modules/ffmpeg-static/ffmpeg.LICENSE node_modules/ffmpeg-static/ffmpeg.README
-          npm rebuild ffmpeg-static
+          rm -f node_modules/@derhuerst/ffprobe-static/ffprobe \
+                node_modules/@derhuerst/ffprobe-static/ffprobe.exe \
+                node_modules/@derhuerst/ffprobe-static/ffprobe.LICENSE \
+                node_modules/@derhuerst/ffprobe-static/ffprobe.README
+          npm rebuild ffmpeg-static @derhuerst/ffprobe-static
         env:
           npm_config_arch: ${{ matrix.arch }}
           npm_config_platform: ${{ matrix.platform }}
@@ -120,7 +124,7 @@ jobs:
       # (existence *and* architecture, since its binary is downloaded, not
       # compiled, and the previous step's reinstall is what this proves
       # actually worked).
-      - name: Verify the platform-matched whisper-cli and ffmpeg exist
+      - name: Verify the platform-matched whisper-cli, ffmpeg and ffprobe exist
         shell: bash
         run: node scripts/verify-release-binaries.mjs
         env:

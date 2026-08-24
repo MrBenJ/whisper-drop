@@ -113,43 +113,45 @@ export function ModelPicker({
         )}
       </div>
 
-      <p className="model-picker-tradeoff">
-        Bigger models catch more of what's said but take longer per minute of audio. Start with
-        whatever downloads fastest. You can switch models any time without losing a download.
-      </p>
+      <div className="model-picker-body">
+        <p className="model-picker-tradeoff">
+          Bigger models catch more of what's said but take longer per minute of audio. Start with
+          whatever downloads fastest. You can switch models any time without losing a download.
+        </p>
 
-      <label className="switch-control model-picker-toggle">
-        <span>{englishOnly ? 'English only' : 'All languages'}</span>
-        <input
-          type="checkbox"
-          role="switch"
-          checked={englishOnly}
-          onChange={(event) => onToggleEnglishOnly(event.target.checked)}
-        />
-      </label>
+        <label className="switch-control model-picker-toggle">
+          <span>{englishOnly ? 'English only' : 'All languages'}</span>
+          <input
+            type="checkbox"
+            role="switch"
+            checked={englishOnly}
+            onChange={(event) => onToggleEnglishOnly(event.target.checked)}
+          />
+        </label>
 
-      <ul className="model-picker-list">
-        {rows.map((row) => {
-          const active = row.base === activeBase
-          const downloading = row.downloading !== undefined || row.base === downloadingBase
-          const note = englishOnly && NO_PARTIAL_SWAP_BASES.has(row.base)
+        <ul className="model-picker-list">
+          {rows.map((row) => {
+            const active = row.base === activeBase
+            const downloading = row.downloading !== undefined || row.base === downloadingBase
+            const note = englishOnly && NO_PARTIAL_SWAP_BASES.has(row.base)
 
-          return (
-            <li key={row.base} className="model-row-item" aria-current={active ? 'true' : undefined}>
-              <ModelRowView
-                row={row}
-                active={active}
-                downloading={downloading}
-                onChoose={onChoose}
-                onDownload={onDownload}
-                onCancelDownload={onCancelDownload}
-                onRemove={onRemove}
-              />
-              {note && <p className="model-row-note">{NO_PARTIAL_SWAP_NOTE}</p>}
-            </li>
-          )
-        })}
-      </ul>
+            return (
+              <li key={row.base} className="model-row-item" aria-current={active ? 'true' : undefined}>
+                <ModelRowView
+                  row={row}
+                  active={active}
+                  downloading={downloading}
+                  onChoose={onChoose}
+                  onDownload={onDownload}
+                  onCancelDownload={onCancelDownload}
+                  onRemove={onRemove}
+                />
+                {note && <p className="model-row-note">{NO_PARTIAL_SWAP_NOTE}</p>}
+              </li>
+            )
+          })}
+        </ul>
+      </div>
     </div>
   )
 

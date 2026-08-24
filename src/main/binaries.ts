@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ffprobeStatic from '@derhuerst/ffprobe-static'
 import ffmpegStatic from 'ffmpeg-static'
-import ffprobeStatic from 'ffprobe-static'
 import { AppError } from '../shared/errors.js'
 
 /**
@@ -84,7 +84,7 @@ export function resolveWhisperCliPath(env: BinaryEnv): string {
 const ASAR_SEGMENT = /([\\/])app\.asar([\\/])/
 
 /**
- * `ffmpeg-static` and `ffprobe-static` compute their paths from their own
+ * `ffmpeg-static` and `@derhuerst/ffprobe-static` compute their paths from their own
  * `__dirname`, which in a packaged app is inside `app.asar`. A file in an asar
  * archive is not a real file on disk and cannot be spawned, so both packages
  * are unpacked (`asarUnpack` in `electron-builder.json`) and the path has to
@@ -114,5 +114,12 @@ export function ffmpegPath(): string {
 }
 
 export function ffprobePath(): string {
-  return unpackedPath(ffprobeStatic.path)
+  if (!ffprobeStatic) {
+    throw new AppError(
+      'FFMPEG_FAILED',
+      "Couldn't inspect this audio or video file.",
+      `@derhuerst/ffprobe-static did not resolve a binary for ${process.platform}-${process.arch}`,
+    )
+  }
+  return unpackedPath(ffprobeStatic)
 }

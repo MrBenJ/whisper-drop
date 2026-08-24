@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -186,4 +186,29 @@ describe('media binaries', () => {
   it('resolves ffprobe to a file that exists', () => {
     expect(existsSync(ffprobePath())).toBe(true)
   })
+
+  it.skipIf(process.arch !== 'arm64' && process.arch !== 'x64')(
+    'resolves ffprobe to a binary built for the current process architecture',
+    () => {
+      const binary = readFileSync(ffprobePath())
+      let detected: 'arm64' | 'x64' | undefined
+
+      if (process.platform === 'darwin') {
+        const cpuType = binary.readUInt32LE(4)
+        if (cpuType === 0x0100000c) detected = 'arm64'
+        if (cpuType === 0x01000007) detected = 'x64'
+      } else if (process.platform === 'win32') {
+        const peOffset = binary.readUInt32LE(0x3c)
+        const machine = binary.readUInt16LE(peOffset + 4)
+        if (machine === 0xaa64) detected = 'arm64'
+        if (machine === 0x8664) detected = 'x64'
+      } else if (process.platform === 'linux') {
+        const machine = binary.readUInt16LE(18)
+        if (machine === 0xb7) detected = 'arm64'
+        if (machine === 0x3e) detected = 'x64'
+      }
+
+      expect(detected).toBe(process.arch)
+    },
+  )
 })

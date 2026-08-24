@@ -187,8 +187,9 @@ screen (open it from the header) as well as here:
 - **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)**, MIT licensed. Built from source at a
   pinned tag and bundled as its own executable — whisper-drop spawns it as a child process, it
   isn't linked into the app.
-- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio. The binary
-  supplied by the `ffmpeg-static` npm package is a **GPL/nonfree build** — running it with
+- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio. The binaries
+  supplied by the `ffmpeg-static` and `@derhuerst/ffprobe-static` npm packages include a
+  **GPL/nonfree ffmpeg build** — running it with
   `-version` shows `--enable-gpl --enable-version3 --enable-nonfree` in its configuration, not the
   LGPL build. This app invokes it as a separate executable and does not link against it, which is
   the correct answer to the *LGPL linking* question — but it doesn't address `--enable-nonfree`.
