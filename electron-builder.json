@@ -6,6 +6,7 @@
     "output": "dist"
   },
   "files": ["out/**", "package.json"],
+  "beforePack": "./scripts/verify-before-pack.mjs",
   "asar": true,
   "asarUnpack": ["node_modules/ffmpeg-static/**", "node_modules/@derhuerst/ffprobe-static/**"],
   "extraResources": [

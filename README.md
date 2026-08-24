@@ -154,7 +154,11 @@ all. See the comment block in `release.yml` for the exact disabled step and how 
 If you want to test a packaged build yourself, build it locally — see
 [Building from source](#building-from-source) above; `npm run build` followed by
 `npx electron-builder` (with the flags for your platform, e.g. `--mac --arm64`) produces the same
-installer the workflow would.
+installer the workflow would. Packaging checks every bundled executable against the requested
+platform and architecture before it starts, so a cross-architecture command fails rather than
+silently producing an installer with host-architecture media tools. For cross-architecture builds,
+reinstall `ffmpeg-static` and `@derhuerst/ffprobe-static` with matching `npm_config_platform` and
+`npm_config_arch` values first, as shown in the release workflow.
 
 ### Manual smoke check before release
 

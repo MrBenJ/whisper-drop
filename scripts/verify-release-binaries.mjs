@@ -20,7 +20,11 @@
 // a client's hands.
 import { existsSync, readFileSync } from 'node:fs'
 
-const platform = process.platform
+const platform = process.env.TARGET_PLATFORM ?? process.platform
+if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') {
+  console.error(`TARGET_PLATFORM must be darwin, win32 or linux, received ${platform}`)
+  process.exit(1)
+}
 const arch = process.env.TARGET_ARCH
 if (arch !== 'x64' && arch !== 'arm64') {
   console.error(`TARGET_ARCH must be x64 or arm64, received ${arch}`)

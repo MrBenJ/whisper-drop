@@ -129,6 +129,7 @@ jobs:
         run: node scripts/verify-release-binaries.mjs
         env:
           TARGET_ARCH: ${{ matrix.arch }}
+          TARGET_PLATFORM: ${{ matrix.platform }}
 
       - run: npm run build
 

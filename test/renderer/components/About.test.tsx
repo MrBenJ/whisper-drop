@@ -41,4 +41,18 @@ describe('About', () => {
     unmount()
     expect(document.activeElement).toBe(trigger)
   })
+
+  it('keeps keyboard focus inside the modal', () => {
+    render(<About onClose={vi.fn()} />)
+
+    const dialog = screen.getByRole('dialog')
+    const close = screen.getByRole('button', { name: 'Close' })
+    expect(document.activeElement).toBe(dialog)
+
+    fireEvent.keyDown(window, { key: 'Tab' })
+    expect(document.activeElement).toBe(close)
+
+    fireEvent.keyDown(window, { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(close)
+  })
 })

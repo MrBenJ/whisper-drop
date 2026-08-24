@@ -15,6 +15,7 @@ const CONFIG = JSON.parse(
   readFileSync(fileURLToPath(new URL('../../electron-builder.json', import.meta.url)), 'utf8'),
 ) as {
   files: string[]
+  beforePack: string
   asar: boolean
   asarUnpack: string[]
   extraResources: { from: string; to: string }[]
@@ -26,6 +27,10 @@ const CONFIG = JSON.parse(
 }
 
 describe('asar packing', () => {
+  it('verifies native binary architectures before every package build', () => {
+    expect(CONFIG.beforePack).toBe('./scripts/verify-before-pack.mjs')
+  })
+
   it('keeps asar on, so asarUnpack means something', () => {
     expect(CONFIG.asar).toBe(true)
   })

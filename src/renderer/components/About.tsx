@@ -24,6 +24,38 @@ export function About({ onClose }: AboutProps) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [onClose])
 
+  // aria-modal describes the relationship to assistive technology, but it
+  // does not keep keyboard focus from moving to controls behind the scrim.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== 'Tab') return
+      const container = containerRef.current
+      if (!container) return
+
+      const focusable = container.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )
+      if (focusable.length === 0) return
+
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      const active = document.activeElement
+      const activeIsFocusable = Array.from(focusable).some((element) => element === active)
+
+      if (event.shiftKey) {
+        if (active === first || !activeIsFocusable) {
+          event.preventDefault()
+          last?.focus()
+        }
+      } else if (active === last || !activeIsFocusable) {
+        event.preventDefault()
+        first?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div
       className="about-overlay"
