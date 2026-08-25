@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import ffmpegPath from 'ffmpeg-static'
 import { describe, expect, it } from 'vitest'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
@@ -43,6 +45,33 @@ describe('app icon packaging', () => {
     expect(png.readUInt32BE(20)).toBe(1024)
   })
 
+  it('keeps the monogram legible at Dock scale', () => {
+    if (!ffmpegPath) throw new Error('ffmpeg-static binary is unavailable')
+
+    const rgba = execFileSync(ffmpegPath, [
+      '-v', 'error',
+      '-i', `${ROOT}/build/icons/32x32.png`,
+      '-f', 'rawvideo',
+      '-pix_fmt', 'rgba',
+      'pipe:1',
+    ])
+    expect(rgba.length).toBe(32 * 32 * 4)
+    let brightMonogramPixels = 0
+
+    for (let y = 13; y <= 19; y += 1) {
+      for (let x = 8; x <= 23; x += 1) {
+        const offset = (y * 32 + x) * 4
+        const luminance =
+          rgba.readUInt8(offset) * 0.2126 +
+          rgba.readUInt8(offset + 1) * 0.7152 +
+          rgba.readUInt8(offset + 2) * 0.0722
+        if (luminance > 160) brightMonogramPixels += 1
+      }
+    }
+
+    expect(brightMonogramPixels).toBeGreaterThanOrEqual(10)
+  })
+
   it('ships valid native icon containers for macOS and Windows', () => {
     const icns = readFileSync(`${ROOT}/build/icon.icns`)
     expect(icns.subarray(0, 4).toString('ascii')).toBe('icns')
@@ -53,5 +82,4 @@ describe('app icon packaging', () => {
     expect(ico.readUInt16LE(2)).toBe(1)
     expect(ico.readUInt16LE(4)).toBe(6)
   })
-
 })
