@@ -2,12 +2,13 @@ import { execFile } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
 import verifyBeforePack from '../../scripts/verify-before-pack.mjs'
 
 const execFileAsync = promisify(execFile)
-const SCRIPT = new URL('../../scripts/verify-release-binaries.mjs', import.meta.url)
+const SCRIPT = fileURLToPath(new URL('../../scripts/verify-release-binaries.mjs', import.meta.url))
 
 function executableHeader(platform: NodeJS.Platform, arch: 'arm64' | 'x64'): Buffer {
   if (platform === 'darwin') {
@@ -77,7 +78,7 @@ describe('verify-release-binaries', () => {
     const { root, targetArch } = await releaseFixture()
 
     await expect(
-      execFileAsync(process.execPath, [SCRIPT.pathname], {
+      execFileAsync(process.execPath, [SCRIPT], {
         cwd: root,
         env: { ...process.env, TARGET_ARCH: targetArch },
       }),
@@ -94,7 +95,7 @@ describe('verify-release-binaries', () => {
       const { root, targetArch } = await releaseFixture({ [optionName]: wrongArch })
 
       await expect(
-        execFileAsync(process.execPath, [SCRIPT.pathname], {
+        execFileAsync(process.execPath, [SCRIPT], {
           cwd: root,
           env: { ...process.env, TARGET_ARCH: targetArch },
         }),
@@ -113,7 +114,7 @@ describe('verify-release-binaries', () => {
       const { root, targetArch } = await releaseFixture({ omit })
 
       await expect(
-        execFileAsync(process.execPath, [SCRIPT.pathname], {
+        execFileAsync(process.execPath, [SCRIPT], {
           cwd: root,
           env: { ...process.env, TARGET_ARCH: targetArch },
         }),

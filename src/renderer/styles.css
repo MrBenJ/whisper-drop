@@ -283,8 +283,7 @@ select {
   transform: translateX(14px);
 }
 
-.about-button,
-.licenses-button {
+.header-link-button {
   padding: var(--space-1) var(--space-2);
   background: transparent;
   border: 1px solid var(--hairline);
@@ -294,8 +293,7 @@ select {
   color: var(--ink-muted);
 }
 
-.about-button:hover,
-.licenses-button:hover {
+.header-link-button:hover {
   border-color: var(--accent);
   color: var(--accent-text);
 }

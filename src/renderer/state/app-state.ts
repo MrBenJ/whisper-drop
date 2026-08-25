@@ -145,13 +145,13 @@ export function reduce(state: AppState, event: AppEvent): AppState {
       return { ...state, pickerOpen: false }
 
     case 'licenses-opened':
-      return { ...state, licensesOpen: true }
+      return { ...state, licensesOpen: true, aboutOpen: false }
 
     case 'licenses-closed':
       return { ...state, licensesOpen: false }
 
     case 'about-opened':
-      return { ...state, aboutOpen: true }
+      return { ...state, aboutOpen: true, licensesOpen: false }
 
     case 'about-closed':
       return { ...state, aboutOpen: false }

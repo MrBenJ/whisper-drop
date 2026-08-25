@@ -96,11 +96,11 @@ export function Header({
           </select>
         </label>
 
-        <button type="button" className="about-button" onClick={onOpenAbout}>
+        <button type="button" className="header-link-button" onClick={onOpenAbout}>
           About
         </button>
 
-        <button type="button" className="licenses-button" onClick={onOpenLicenses}>
+        <button type="button" className="header-link-button" onClick={onOpenLicenses}>
           Licenses
         </button>
       </div>

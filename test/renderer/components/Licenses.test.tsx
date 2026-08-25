@@ -54,4 +54,17 @@ describe('Licenses', () => {
     fireEvent.mouseDown(screen.getByRole('dialog').parentElement as HTMLElement)
     expect(onClose).toHaveBeenCalledOnce()
   })
+
+  it('does not try to restore focus to a trigger removed while the dialog is open', () => {
+    const trigger = document.createElement('button')
+    document.body.append(trigger)
+    const focus = vi.spyOn(trigger, 'focus')
+    trigger.focus()
+
+    const { unmount } = render(<Licenses onClose={vi.fn()} />)
+    trigger.remove()
+    unmount()
+
+    expect(focus).toHaveBeenCalledOnce()
+  })
 })
