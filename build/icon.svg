@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">whisper-drop</title>
+  <desc id="description">A hairline w.d. monogram in a charcoal circle on a warm paper app tile.</desc>
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#e8e3d9" />
+  <circle cx="512" cy="512" r="306" fill="#2e2e29" />
+  <text x="281" y="600" fill="#e8e3d9" font-family="Courier New, Courier, monospace" font-size="300" font-weight="400">w</text>
+  <circle cx="482" cy="587" r="8" fill="#e8e3d9" />
+  <text x="509" y="600" fill="#e8e3d9" font-family="Courier New, Courier, monospace" font-size="300" font-weight="400">d</text>
+  <circle cx="710" cy="587" r="8" fill="#e8e3d9" />
+</svg>

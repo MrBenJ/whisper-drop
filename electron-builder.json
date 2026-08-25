@@ -19,12 +19,14 @@
   "publish": null,
   "mac": {
     "target": ["dmg"],
+    "icon": "build/icon.icns",
     "category": "public.app-category.productivity",
     "identity": null,
     "notarize": false
   },
   "win": {
-    "target": ["nsis"]
+    "target": ["nsis"],
+    "icon": "build/icon.ico"
   },
   "nsis": {
     "oneClick": false,
@@ -33,6 +35,7 @@
   },
   "linux": {
     "target": ["AppImage", "deb"],
+    "icon": "build/icons",
     "category": "AudioVideo",
     "maintainer": "Human Balance AI <noreply@humanbalanceai.com>",
     "synopsis": "Drag a media file in, get a transcript out — on your own machine."
