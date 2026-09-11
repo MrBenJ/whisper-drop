@@ -169,7 +169,9 @@ jobs:
           path: artifacts
           merge-multiple: true
       - name: Create the draft release with all platform assets
-        uses: softprops/action-gh-release@v2
+        # Third-party action pinned to a full commit SHA (v2.0.5) rather than a
+        # mutable tag: this job holds contents:write, so its supply chain matters.
+        uses: softprops/action-gh-release@69320dbe05506a9a39fc8ae11030b214ec2d1f87
         with:
           files: artifacts/*
           fail_on_unmatched_files: true
