@@ -32,38 +32,50 @@ function executableHeader(platform: NodeJS.Platform, arch: 'arm64' | 'x64'): Buf
   return header
 }
 
+// The copyright banner FFmpeg compiles into every binary; the license gate
+// treats a media binary lacking it as unverifiable.
+const FFMPEG_BANNER = 'the FFmpeg developers'
+
+// The arch header the detector reads, followed by the strings the license
+// byte-scan looks for — a realistic stand-in for a provisioned ffmpeg/ffprobe.
+function mediaBinary(platform: NodeJS.Platform, arch: 'arm64' | 'x64', configLine: string): Buffer {
+  return Buffer.concat([
+    executableHeader(platform, arch),
+    Buffer.from(`\x00${FFMPEG_BANNER}\x00configuration: ${configLine}\x00`, 'latin1'),
+  ])
+}
+
 type ReleaseFixtureOptions = {
   ffmpegArch?: 'arm64' | 'x64'
   ffprobeArch?: 'arm64' | 'x64'
   omit?: 'ffmpeg' | 'ffprobe'
+  ffmpegConfig?: string
 }
 
 async function releaseFixture(options: ReleaseFixtureOptions = {}) {
   const targetArch = process.arch === 'arm64' ? 'arm64' : 'x64'
   const ffmpegArch = options.ffmpegArch ?? targetArch
   const ffprobeArch = options.ffprobeArch ?? targetArch
+  const cleanConfig = '--prefix=/x --disable-shared --enable-static'
   const root = await mkdtemp(join(tmpdir(), 'whisper-drop-release-'))
-  const whisperDir = join(root, 'resources', `${process.platform}-${targetArch}`)
-  const ffmpegDir = join(root, 'node_modules', 'ffmpeg-static')
-  const ffprobeDir = join(root, 'node_modules', '@derhuerst', 'ffprobe-static')
-  await Promise.all([
-    mkdir(whisperDir, { recursive: true }),
-    mkdir(ffmpegDir, { recursive: true }),
-    mkdir(ffprobeDir, { recursive: true }),
-  ])
+  const resDir = join(root, 'resources', `${process.platform}-${targetArch}`)
+  await mkdir(resDir, { recursive: true })
 
   const exe = process.platform === 'win32' ? '.exe' : ''
   const writes = [
-    writeFile(join(whisperDir, `whisper-cli${exe}`), executableHeader(process.platform, targetArch)),
+    writeFile(join(resDir, `whisper-cli${exe}`), executableHeader(process.platform, targetArch)),
   ]
   if (options.omit !== 'ffmpeg') {
     writes.push(
-      writeFile(join(ffmpegDir, `ffmpeg${exe}`), executableHeader(process.platform, ffmpegArch)),
+      writeFile(
+        join(resDir, `ffmpeg${exe}`),
+        mediaBinary(process.platform, ffmpegArch, options.ffmpegConfig ?? cleanConfig),
+      ),
     )
   }
   if (options.omit !== 'ffprobe') {
     writes.push(
-      writeFile(join(ffprobeDir, `ffprobe${exe}`), executableHeader(process.platform, ffprobeArch)),
+      writeFile(join(resDir, `ffprobe${exe}`), mediaBinary(process.platform, ffprobeArch, cleanConfig)),
     )
   }
   await Promise.all(writes)
@@ -86,11 +98,11 @@ describe('verify-release-binaries', () => {
   })
 
   it.each([
-    ['ffmpeg-static', 'ffmpegArch'],
-    ['@derhuerst/ffprobe-static', 'ffprobeArch'],
+    ['ffmpeg', 'ffmpegArch'],
+    ['ffprobe', 'ffprobeArch'],
   ] as const)(
     'rejects a release whose %s executable has the wrong architecture',
-    async (packageName, optionName) => {
+    async (name, optionName) => {
       const wrongArch = process.arch === 'arm64' ? 'x64' : 'arm64'
       const { root, targetArch } = await releaseFixture({ [optionName]: wrongArch })
 
@@ -100,17 +112,14 @@ describe('verify-release-binaries', () => {
           env: { ...process.env, TARGET_ARCH: targetArch },
         }),
       ).rejects.toMatchObject({
-        stderr: expect.stringMatching(new RegExp(`${packageName.replace('/', '\\/')}.*is built for`)),
+        stderr: expect.stringMatching(new RegExp(`resources/.*${name}.*is built for`)),
       })
     },
   )
 
-  it.each([
-    ['ffmpeg-static', 'ffmpeg'],
-    ['@derhuerst/ffprobe-static', 'ffprobe'],
-  ] as const)(
+  it.each(['ffmpeg', 'ffprobe'] as const)(
     'rejects a release whose %s executable is missing',
-    async (packageName, omit) => {
+    async (omit) => {
       const { root, targetArch } = await releaseFixture({ omit })
 
       await expect(
@@ -119,10 +128,25 @@ describe('verify-release-binaries', () => {
           env: { ...process.env, TARGET_ARCH: targetArch },
         }),
       ).rejects.toMatchObject({
-        stderr: expect.stringMatching(new RegExp(`missing .*${packageName.replace('/', '\\/')}`)),
+        stderr: expect.stringMatching(new RegExp(`missing .*resources/.*${omit}`)),
       })
     },
   )
+
+  it.skipIf(!supportedHost)('rejects a release whose ffmpeg is a nonfree build', async () => {
+    const { root, targetArch } = await releaseFixture({
+      ffmpegConfig: '--prefix=/x --enable-gpl --enable-nonfree',
+    })
+
+    await expect(
+      execFileAsync(process.execPath, [SCRIPT], {
+        cwd: root,
+        env: { ...process.env, TARGET_ARCH: targetArch },
+      }),
+    ).rejects.toMatchObject({
+      stderr: expect.stringMatching(/--enable-nonfree/),
+    })
+  })
 })
 
 describe('verify-before-pack', () => {
@@ -139,7 +163,7 @@ describe('verify-before-pack', () => {
           electronPlatformName: process.platform,
           packager: { projectDir: root },
         }),
-      ).rejects.toThrow(/@derhuerst\/ffprobe-static\/ffprobe.*is built for/)
+      ).rejects.toThrow(/resources\/.*ffprobe.*is built for/)
     },
   )
 })
