@@ -7,12 +7,13 @@ on:
     tags: ['v*']
   workflow_dispatch:
 
-# Nothing is published and no release is created, and no downloadable artifact is
-# retained either: this is a public repo, and a workflow-run artifact is externally
-# downloadable the moment it exists, which is exactly what the ffmpeg-static licence
-# problem below says must not happen yet. This workflow proves packaging works on all
-# three platforms and then throws the output away. See the "Package" and "Verify"
-# steps, and the commented-out upload step at the end of the job, for the full story.
+# Builds installers for all four targets, uploads each as a workflow artifact, and
+# on a `v*` tag publishes them to a draft GitHub Release. This is safe now that the
+# bundled ffmpeg/ffprobe are redistributable LGPL builds (no --enable-gpl/--enable-nonfree):
+# the "Verify" step byte-scans every media binary for those flags and fails the job
+# before anything is uploaded, so a non-redistributable binary can never leave the runner.
+# The release job is the only one granted `contents: write`; the release is created as a
+# draft so a human flips it live after the manual per-platform smoke check.
 permissions:
   contents: read
 
@@ -68,35 +69,30 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Both media packages download exactly one binary at install time, chosen by
-      # npm_config_arch/npm_config_platform (falling back to the host's
-      # os.arch()/os.platform() if unset) — see node_modules/ffmpeg-static/install.js.
-      # A bare `npm ci` above fetches the *runner's* arch, which is wrong
-      # whenever matrix.arch cross-builds (macOS x64 on this arm64 runner):
-      # the app would install and launch fine, then fail every transcode
-      # silently. Force a reinstall pinned to the arch we're packaging for.
-      # install.js skips its download if a binary already sits at the target
-      # path, so the one `npm ci` just fetched has to be removed first.
-      - name: Install the ${{ matrix.arch }} ffmpeg and ffprobe binaries
-        shell: bash
-        run: |
-          rm -f node_modules/ffmpeg-static/ffmpeg node_modules/ffmpeg-static/ffmpeg.exe \
-                node_modules/ffmpeg-static/ffmpeg.LICENSE node_modules/ffmpeg-static/ffmpeg.README
-          rm -f node_modules/@derhuerst/ffprobe-static/ffprobe \
-                node_modules/@derhuerst/ffprobe-static/ffprobe.exe \
-                node_modules/@derhuerst/ffprobe-static/ffprobe.LICENSE \
-                node_modules/@derhuerst/ffprobe-static/ffprobe.README
-          npm rebuild ffmpeg-static @derhuerst/ffprobe-static
-        env:
-          npm_config_arch: ${{ matrix.arch }}
-          npm_config_platform: ${{ matrix.platform }}
-
       - run: cmake --version
+
+      # The macOS x64 leg cross-compiles ffmpeg on an arm64 runner; x86 assembly
+      # needs the nasm assembler, which isn't preinstalled. Harmless on the arm64
+      # leg, which doesn't use it.
+      - name: Install nasm for the ffmpeg build
+        if: matrix.platform == 'darwin'
+        run: brew install nasm
 
       - name: Read whisper.cpp tag
         id: manifest
         shell: bash
         run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
+
+      # macOS is compiled from the FFmpeg source tag; Windows/Linux come from a
+      # named BtbN asset. Either uniquely identifies the ffmpeg being shipped, so
+      # it belongs in the cache key alongside the whisper tag.
+      - name: Read ffmpeg build id
+        id: ffmpeg
+        shell: bash
+        run: echo "id=$(node -p "const m=require('./ffmpeg.manifest.json'); process.env.WD==='darwin'?m.ffmpegTag:m.btbn.assets[process.env.SLUG].filename")" >> "$GITHUB_OUTPUT"
+        env:
+          WD: ${{ matrix.platform }}
+          SLUG: ${{ matrix.platform }}-${{ matrix.arch }}
 
       # Same convention as ci.yml's integration and e2e jobs, plus the arch:
       # both macOS jobs run on the same runner.os and build different binaries
@@ -104,15 +100,21 @@ jobs:
       # the Linux x64 leg specifically this key is identical to ci.yml's
       # `${{ runner.os }}-whisper-<tag>-x64` — deliberate, so a push that
       # already primed CI's cache doesn't pay to rebuild whisper.cpp again here.
-      - name: Cache compiled whisper binary
+      # One cache covers both provisioned tools: they share resources/ as their
+      # output, so a single key keyed on BOTH ids avoids two caches racing to
+      # populate the same directory. A bump to either manifest busts it.
+      - name: Cache provisioned whisper + ffmpeg binaries
         uses: actions/cache@v4
         with:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-${{ matrix.arch }}
+            .cache/ffmpeg
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-${{ matrix.arch }}-ffmpeg-${{ steps.ffmpeg.outputs.id }}
 
-      - name: Build whisper.cpp for ${{ matrix.arch }}
+      # npm run setup builds whisper.cpp and provisions ffmpeg/ffprobe for the
+      # target arch; each step no-ops when its stamp already matches (cache hit).
+      - name: Build whisper.cpp and provision ffmpeg for ${{ matrix.arch }}
         run: npm run setup
         env:
           WHISPER_DROP_TARGET_ARCH: ${{ matrix.arch }}
@@ -141,29 +143,34 @@ jobs:
           # Developer ID that happens to be on the machine.
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
-      # Artifact upload is deliberately disabled, not merely unfinished.
-      #
-      # The `ffmpeg-static` binary this app bundles is built `--enable-nonfree` (see the
-      # "Licenses" section of the README) and FFmpeg's own terms say a binary built that
-      # way must not be redistributed. This is a public repo, so a GitHub Actions
-      # workflow-run artifact does not stay internal the way build output on a private
-      # CI runner would — anyone can download it the moment it exists. Uploading here on
-      # every `v*` tag or manual dispatch would recreate the exact distribution the
-      # README says isn't safe yet, regardless of whether a GitHub Release is ever cut.
-      #
-      # Do not re-enable this step until that's resolved — either by bundling an
-      # LGPL-only ffmpeg build (one without `--enable-nonfree`), or by dropping the
-      # bundled ffmpeg entirely and requiring a system install. See "Before publishing
-      # releases" in the README for the full option writeup. Everything above this
-      # point — dependency install with the arch pin, the whisper.cpp build, the
-      # electron-builder package step, and the binary verification step — still runs and
-      # still fails the job loudly if packaging breaks; only the upload is gone.
-      #
-      # Restore verbatim when it's time to re-enable:
-      #
-      # - uses: actions/upload-artifact@v4
-      #   with:
-      #     name: whisper-drop-${{ matrix.slug }}
-      #     path: ${{ matrix.artifacts }}
-      #     if-no-files-found: error
-      #     retention-days: 14
+      # Safe to upload: the "Verify" step above byte-scanned every bundled ffmpeg/
+      # ffprobe for --enable-gpl/--enable-nonfree and failed the job before reaching
+      # here if any were present, so only redistributable LGPL binaries can be uploaded.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-drop-${{ matrix.slug }}
+          path: ${{ matrix.artifacts }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # Publish a GitHub Release on `v*` tags only, from the artifacts the package job
+  # verified and uploaded. Created as a draft: a human runs the per-platform smoke
+  # check (README "Manual smoke check before release"), then publishes it.
+  release:
+    name: Publish GitHub Release
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Create the draft release with all platform assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          fail_on_unmatched_files: true
+          draft: true

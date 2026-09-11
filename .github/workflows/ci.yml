@@ -33,6 +33,10 @@ jobs:
         id: manifest
         run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
 
+      - name: Read ffmpeg build id
+        id: ffmpeg
+        run: echo "id=$(node -p "require('./ffmpeg.manifest.json').btbn.assets['linux-x64'].filename")" >> "$GITHUB_OUTPUT"
+
       # Keyed on the whisper.cpp tag so a manifest bump invalidates the cache and rebuilds;
       # otherwise a cache hit skips the multi-minute cmake build entirely. This key is
       # deliberately identical to release.yml's Linux x64 leg's key — intentional sharing,
@@ -43,7 +47,8 @@ jobs:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
+            .cache/ffmpeg
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64-ffmpeg-${{ steps.ffmpeg.outputs.id }}
 
       # Keyed on the model filename, not its contents, since fetch-test-model.mjs
       # already verifies the download against a pinned checksum.
@@ -71,6 +76,10 @@ jobs:
         id: manifest
         run: echo "tag=$(node -p "require('./whisper.manifest.json').whisperCppTag")" >> "$GITHUB_OUTPUT"
 
+      - name: Read ffmpeg build id
+        id: ffmpeg
+        run: echo "id=$(node -p "require('./ffmpeg.manifest.json').btbn.assets['linux-x64'].filename")" >> "$GITHUB_OUTPUT"
+
       # Same cache keys as the `integration` job above — same compiled
       # binary and test model, so a run that already primed one job's cache
       # doesn't pay to rebuild/redownload for the other.
@@ -80,7 +89,8 @@ jobs:
           path: |
             resources/
             .cache/whisper.cpp
-          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64
+            .cache/ffmpeg
+          key: ${{ runner.os }}-whisper-${{ steps.manifest.outputs.tag }}-x64-ffmpeg-${{ steps.ffmpeg.outputs.id }}
 
       - name: Cache test model
         uses: actions/cache@v4
