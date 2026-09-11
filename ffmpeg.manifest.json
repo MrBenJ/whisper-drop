@@ -1,0 +1,17 @@
+{
+  "ffmpegRepo": "https://github.com/FFmpeg/FFmpeg.git",
+  "ffmpegTag": "n8.1.2",
+  "btbn": {
+    "release": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-11-13-20",
+    "assets": {
+      "win32-x64": {
+        "filename": "ffmpeg-n8.1.2-52-g5a03dfa0f6-win64-lgpl-8.1.zip",
+        "sha256": "bb34791602985a84763e8fae3c2d734726965f38637cb5bbef2b5c4c5b7893c6"
+      },
+      "linux-x64": {
+        "filename": "ffmpeg-n8.1.2-52-g5a03dfa0f6-linux64-lgpl-8.1.tar.xz",
+        "sha256": "aeb05ce45e64bdade17f5832a7761044bc1d275025e2e3f42f36f51cb8903cc7"
+      }
+    }
+  }
+}
