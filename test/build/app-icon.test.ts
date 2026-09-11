@@ -1,8 +1,8 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import ffmpegPath from 'ffmpeg-static'
 import { describe, expect, it } from 'vitest'
+import { ffmpegPath } from '../../src/main/binaries.js'
 
 const ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const CONFIG = JSON.parse(readFileSync(`${ROOT}/electron-builder.json`, 'utf8')) as {
@@ -45,10 +45,10 @@ describe('app icon packaging', () => {
     expect(png.readUInt32BE(20)).toBe(1024)
   })
 
-  it('keeps the monogram legible at Dock scale', () => {
-    if (!ffmpegPath) throw new Error('ffmpeg-static binary is unavailable')
-
-    const rgba = execFileSync(ffmpegPath, [
+  // Skips when ffmpeg isn't provisioned yet (the unit-test CI job runs no
+  // setup); the integration/e2e jobs and local `npm run setup` exercise it.
+  it.skipIf(!existsSync(ffmpegPath()))('keeps the monogram legible at Dock scale', () => {
+    const rgba = execFileSync(ffmpegPath(), [
       '-v', 'error',
       '-i', `${ROOT}/build/icons/32x32.png`,
       '-f', 'rawvideo',

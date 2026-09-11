@@ -1,8 +1,5 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import ffprobeStatic from '@derhuerst/ffprobe-static'
-import ffmpegStatic from 'ffmpeg-static'
-import { AppError } from '../shared/errors.js'
 
 /**
  * Everything path resolution depends on, in one place, so both branches are
@@ -77,21 +74,19 @@ export function resolveWhisperCliPath(env: BinaryEnv): string {
   return join(resolveResourcesDir(env), exe)
 }
 
-// Matched with both separators so the rule is the same on every host, which
-// is what lets the Windows case be tested from macOS or Linux. Anchored on
-// separators either side: `my-app.asar/` is not an archive, and an already
-// rewritten `app.asar.unpacked/` must not be rewritten twice.
-const ASAR_SEGMENT = /([\\/])app\.asar([\\/])/
-
 /**
- * `ffmpeg-static` and `@derhuerst/ffprobe-static` compute their paths from their own
- * `__dirname`, which in a packaged app is inside `app.asar`. A file in an asar
- * archive is not a real file on disk and cannot be spawned, so both packages
- * are unpacked (`asarUnpack` in `electron-builder.json`) and the path has to
- * point at the unpacked copy. A no-op everywhere else.
+ * ffmpeg and ffprobe live beside whisper-cli in `resources/<platform>-<arch>/`,
+ * provisioned by `scripts/build-ffmpeg.mjs` and shipped via electron-builder's
+ * `extraResources`. Same resolution rule as the whisper binary.
  */
-export function unpackedPath(path: string): string {
-  return path.replace(ASAR_SEGMENT, '$1app.asar.unpacked$2')
+export function resolveFfmpegPath(env: BinaryEnv): string {
+  const exe = env.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  return join(resolveResourcesDir(env), exe)
+}
+
+export function resolveFfprobePath(env: BinaryEnv): string {
+  const exe = env.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+  return join(resolveResourcesDir(env), exe)
 }
 
 export function resourcesDir(): string {
@@ -103,23 +98,9 @@ export function whisperCliPath(): string {
 }
 
 export function ffmpegPath(): string {
-  if (!ffmpegStatic) {
-    throw new AppError(
-      'FFMPEG_FAILED',
-      "Couldn't prepare the audio from this file.",
-      `ffmpeg-static did not resolve a binary for ${process.platform}-${process.arch}`,
-    )
-  }
-  return unpackedPath(ffmpegStatic)
+  return resolveFfmpegPath(currentEnv())
 }
 
 export function ffprobePath(): string {
-  if (!ffprobeStatic) {
-    throw new AppError(
-      'FFMPEG_FAILED',
-      "Couldn't inspect this audio or video file.",
-      `@derhuerst/ffprobe-static did not resolve a binary for ${process.platform}-${process.arch}`,
-    )
-  }
-  return unpackedPath(ffprobeStatic)
+  return resolveFfprobePath(currentEnv())
 }

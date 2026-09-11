@@ -17,7 +17,8 @@
     "test:watch": "vitest",
     "test:e2e": "npm run build && node scripts/fetch-test-model.mjs && vitest run --config vitest.e2e.config.ts",
     "test:integration": "node scripts/fetch-test-model.mjs && vitest run --config vitest.integration.config.ts",
-    "setup": "node scripts/build-whisper.mjs"
+    "setup": "node scripts/build-whisper.mjs && node scripts/build-ffmpeg.mjs",
+    "build-ffmpeg": "node scripts/build-ffmpeg.mjs"
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
@@ -36,8 +37,6 @@
     "vitest": "^4.1.0"
   },
   "dependencies": {
-    "@derhuerst/ffprobe-static": "^5.3.0",
-    "ffmpeg-static": "^5.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   }

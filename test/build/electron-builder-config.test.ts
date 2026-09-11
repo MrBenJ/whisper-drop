@@ -17,7 +17,7 @@ const CONFIG = JSON.parse(
   files: string[]
   beforePack: string
   asar: boolean
-  asarUnpack: string[]
+  asarUnpack?: string[]
   extraResources: { from: string; to: string }[]
   publish: unknown
   directories: { output: string }
@@ -35,16 +35,12 @@ describe('asar packing', () => {
     expect(CONFIG.asar).toBe(true)
   })
 
-  // A binary inside app.asar is not a real file on disk and cannot be
-  // spawned. Without these two entries the app builds, installs and launches
-  // cleanly, then fails on the first transcription with an ENOENT naming a
-  // path that looks like it exists.
-  it('unpacks ffmpeg-static, which is spawned as a child process', () => {
-    expect(CONFIG.asarUnpack).toContain('node_modules/ffmpeg-static/**')
-  })
-
-  it('unpacks @derhuerst/ffprobe-static, which is spawned as a child process', () => {
-    expect(CONFIG.asarUnpack).toContain('node_modules/@derhuerst/ffprobe-static/**')
+  // ffmpeg and ffprobe used to be npm packages inside node_modules, which meant
+  // inside app.asar, which meant they needed unpacking to be spawnable. They now
+  // ship as real files under resources/ via extraResources (never inside the
+  // archive), so nothing needs unpacking and the whole array is gone.
+  it('no longer asar-unpacks npm media binaries (they ship via extraResources)', () => {
+    expect(CONFIG.asarUnpack ?? []).toEqual([])
   })
 })
 
