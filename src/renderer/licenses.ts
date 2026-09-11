@@ -35,7 +35,7 @@ export const LICENSES: readonly LicenseEntry[] = [
     // --enable-gpl and no --enable-nonfree, i.e. a plain LGPL build.
     license: 'LGPL-2.1-or-later',
     url: 'https://ffmpeg.org/legal.html',
-    note: "Reads your file and converts its audio to the format the transcriber needs. whisper-drop bundles a redistributable LGPL build — configured without --enable-gpl or --enable-nonfree — and invokes it as a separate executable, linking against no part of it. The corresponding source and exact build configuration are available: on macOS it is compiled from FFmpeg's tagged source (see ffmpeg.manifest.json and scripts/build-ffmpeg.mjs in the repository); on Windows and Linux it is BtbN's published LGPL static build (github.com/BtbN/FFmpeg-Builds).",
+    note: "Reads your file and converts its audio to the format the transcriber needs. whisper-drop bundles a redistributable LGPL build, configured without --enable-gpl or --enable-nonfree, and invokes it as a separate executable, linking against no part of it. The corresponding source and exact build configuration are available: on macOS it is compiled from FFmpeg's tagged source (see ffmpeg.manifest.json and scripts/build-ffmpeg.mjs in the repository); on Windows and Linux it is BtbN's published LGPL static build (github.com/BtbN/FFmpeg-Builds).",
   },
   {
     name: 'Electron',
