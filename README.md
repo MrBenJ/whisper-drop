@@ -117,18 +117,23 @@ runs, or want to contribute.
 - [Node.js](https://nodejs.org/) 22 or later
 - [`cmake`](https://cmake.org/) — needed to compile whisper.cpp from source
 - `git`
+- **On macOS only:** a C toolchain with `make` and `clang` (the Xcode Command Line Tools —
+  `xcode-select --install`), because ffmpeg is compiled from source there. (Windows and Linux
+  download a prebuilt LGPL ffmpeg, so they need no compiler for it.)
 
 ```bash
 git clone https://github.com/MrBenJ/whisper-drop.git
 cd whisper-drop
 npm install
-npm run setup   # builds whisper.cpp for your platform — this is the step that needs cmake
+npm run setup   # builds whisper.cpp and provisions ffmpeg for your platform
 npm run dev     # launches the app
 ```
 
 `npm run setup` clones a pinned tag of [whisper.cpp](https://github.com/ggml-org/whisper.cpp) into
-`.cache/` and compiles it locally; that build step is what `cmake` is for. It only needs to run
-once, or again after a `whisper.manifest.json` version bump.
+`.cache/` and compiles it locally (that step is what `cmake` is for), then provisions ffmpeg and
+ffprobe into `resources/` — compiled from source on macOS, downloaded and checksum-verified from
+[BtbN](https://github.com/BtbN/FFmpeg-Builds) on Windows and Linux. It only needs to run once, or
+again after a `whisper.manifest.json` or `ffmpeg.manifest.json` version bump.
 
 Other useful commands, once set up:
 
@@ -143,18 +148,20 @@ npm run test:e2e  # an end-to-end pass through the real app
 
 `.github/workflows/release.yml`, triggered by pushing a `v*` tag or running it manually
 (`workflow_dispatch`), builds installers for all four targets (macOS arm64, macOS x64, Windows x64,
-Linux x64) on every run. **It deliberately retains no artifacts.** The build, package, and binary
-verification steps all still run and still fail the job if packaging breaks — only the final upload
-is disabled. That's not an oversight: this is a public repo, so a GitHub Actions workflow-run
-artifact is downloadable by anyone the moment it exists, and the `ffmpeg-static` binary this app
-bundles isn't legally redistributable yet (see [Licenses](#licenses) below). Nothing is published or
-tagged automatically either way — but until that's resolved, nothing downloadable is produced at
-all. See the comment block in `release.yml` for the exact disabled step and how to restore it.
+Linux x64). Before any artifact is uploaded, a verification step byte-scans every bundled
+`ffmpeg`/`ffprobe` for the forbidden `--enable-gpl`/`--enable-nonfree` build flags and fails the job
+if it finds them, so only redistributable LGPL binaries can ever leave the runner (see
+[Licenses](#licenses) below). On a `v*` tag, a final job publishes those artifacts to a **draft**
+GitHub Release; a human runs the [manual smoke check](#manual-smoke-check-before-release) and then
+presses publish.
 
 If you want to test a packaged build yourself, build it locally — see
 [Building from source](#building-from-source) above; `npm run build` followed by
 `npx electron-builder` (with the flags for your platform, e.g. `--mac --arm64`) produces the same
-installer the workflow would.
+installer the workflow would. Packaging checks every bundled executable against the requested
+platform and architecture before it starts (and re-runs the license byte-scan), so a
+cross-architecture command fails rather than silently producing an installer with
+host-architecture media tools.
 
 ### Manual smoke check before release
 
@@ -187,37 +194,25 @@ screen (open it from the header) as well as here:
 - **[whisper.cpp](https://github.com/ggml-org/whisper.cpp)**, MIT licensed. Built from source at a
   pinned tag and bundled as its own executable — whisper-drop spawns it as a child process, it
   isn't linked into the app.
-- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio. The binary
-  supplied by the `ffmpeg-static` npm package is a **GPL/nonfree build** — running it with
-  `-version` shows `--enable-gpl --enable-version3 --enable-nonfree` in its configuration, not the
-  LGPL build. This app invokes it as a separate executable and does not link against it, which is
-  the correct answer to the *LGPL linking* question — but it doesn't address `--enable-nonfree`.
-  Under [ffmpeg's own terms](https://ffmpeg.org/legal.html), **binaries built with
-  `--enable-nonfree` must not be redistributed.** That is why `release.yml` deliberately retains no
-  downloadable artifacts today (see [Releases](#releases) above) — see "Before publishing releases"
-  below before that changes.
+- **ffmpeg** (and `ffprobe`), used to read your media file and pull out its audio. whisper-drop
+  bundles a **redistributable LGPL build** — configured without `--enable-gpl` or `--enable-nonfree`
+  — and invokes it as a separate executable, linking against no part of it. The binaries are sourced
+  per platform: on macOS, compiled from FFmpeg's tagged source (see `ffmpeg.manifest.json` and
+  `scripts/build-ffmpeg.mjs`); on Windows and Linux, [BtbN's published LGPL static
+  build](https://github.com/BtbN/FFmpeg-Builds), pinned by checksum. The corresponding source and
+  exact build configuration are available from those same references, which satisfies
+  [ffmpeg's LGPL terms](https://ffmpeg.org/legal.html). Every binary's embedded configuration is
+  byte-scanned for the forbidden flags at pack time, so a non-redistributable build can never ship.
 
-### Before publishing releases
+### Publishing releases — resolved
 
-**This is not yet resolved, and must be before any artifact is distributed publicly.** The
-`ffmpeg-static` binary this app bundles is a nonfree build (see above); FFmpeg's own licensing
-terms say a binary built that way may not be redistributed at all. Current exposure is zero — this
-repository doesn't contain ffmpeg (it's an npm dependency fetched at install time), and
-`release.yml` builds installers on every tag or manual run but uploads none of them: the artifact
-step is disabled, not merely unpublished. The exposure would begin the moment that step is
-re-enabled without this being resolved first, since a workflow-run artifact in a public repo is
-downloadable by anyone, not just a human on the release-managing loop.
-
-This is a decision for the repo owner, not something to resolve unilaterally. The options, without
-a recommendation between them:
-
-- **Bundle an LGPL-only ffmpeg build instead** — a build without `--enable-nonfree` (and without
-  `--enable-gpl`, if LGPL rather than GPL is wanted) from a different static-build source, so the
-  redistribution restriction doesn't apply.
-- **Stop bundling ffmpeg and require a system install** — have whisper-drop call whatever `ffmpeg`
-  the user already has (e.g. via Homebrew, apt, or a Windows install), and document it as a
-  prerequisite. This side-steps redistributing ffmpeg at all, at the cost of an extra install step
-  for every user.
+The redistribution blocker earlier versions of this section described is resolved. whisper-drop now
+bundles a **redistributable LGPL ffmpeg build** (option 1 — an LGPL build without `--enable-gpl` or
+`--enable-nonfree`), so there is no nonfree binary to withhold: macOS is compiled from FFmpeg's
+tagged source with an LGPL configuration, and Windows and Linux use BtbN's checksum-pinned LGPL
+static builds. `scripts/verify-release-binaries.mjs` byte-scans every bundled binary for the
+forbidden flags and fails both local packaging and the release workflow if any appear, so the
+guarantee is enforced automatically rather than by inspection.
 
 ## Built by Human Balance AI
 

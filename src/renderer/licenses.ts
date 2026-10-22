@@ -31,12 +31,11 @@ export const LICENSES: readonly LicenseEntry[] = [
   },
   {
     name: 'FFmpeg (ffmpeg and ffprobe)',
-    // Verified by running the bundled ffmpeg binary's `-version`: its
-    // configuration line includes --enable-gpl --enable-version3
-    // --enable-nonfree, i.e. a GPL/nonfree build, not LGPL.
-    license: 'GPL-2.0-or-later, built with --enable-nonfree',
+    // Verified against the bundled binaries' embedded configuration: no
+    // --enable-gpl and no --enable-nonfree, i.e. a plain LGPL build.
+    license: 'LGPL-2.1-or-later',
     url: 'https://ffmpeg.org/legal.html',
-    note: "Reads your file and converts its audio. Bundled via the ffmpeg-static and ffprobe-static packages and invoked as separate executables; this app links against no part of it. That answers the LGPL linking question, but not the fact that the bundled binary is a nonfree build: under ffmpeg's own terms, binaries built with --enable-nonfree may not be redistributed at all. That is why this repo does not publish release artifacts today (see \"Before publishing releases\" in the README).",
+    note: "Reads your file and converts its audio to the format the transcriber needs. whisper-drop bundles a redistributable LGPL build, configured without --enable-gpl or --enable-nonfree, and invokes it as a separate executable, linking against no part of it. The corresponding source and exact build configuration are available: on macOS it is compiled from FFmpeg's tagged source (see ffmpeg.manifest.json and scripts/build-ffmpeg.mjs in the repository); on Windows and Linux it is BtbN's published LGPL static build (github.com/BtbN/FFmpeg-Builds).",
   },
   {
     name: 'Electron',

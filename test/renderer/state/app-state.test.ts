@@ -137,6 +137,16 @@ describe('viewFor', () => {
 
     expect(state.licensesOpen).toBe(false)
   })
+
+  it('keeps the About and Licenses dialogs mutually exclusive', () => {
+    const about = run([{ type: 'licenses-opened' }, { type: 'about-opened' }], READY)
+    expect(about.aboutOpen).toBe(true)
+    expect(about.licensesOpen).toBe(false)
+
+    const licenses = run([{ type: 'about-opened' }, { type: 'licenses-opened' }], READY)
+    expect(licenses.aboutOpen).toBe(false)
+    expect(licenses.licensesOpen).toBe(true)
+  })
 })
 
 describe('the English-only toggle', () => {

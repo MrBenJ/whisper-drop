@@ -29,6 +29,18 @@ describe('the licence data', () => {
     expect(ffmpeg?.note).toMatch(/separate executable/i)
   })
 
+  it('describes ffmpeg as an LGPL build, not a nonfree one', () => {
+    const ffmpeg = LICENSES.find((entry) => entry.name.startsWith('FFmpeg'))
+    expect(ffmpeg?.license).toMatch(/LGPL/)
+    expect(ffmpeg?.license).not.toMatch(/nonfree/i)
+  })
+
+  it('offers where the corresponding ffmpeg source and build config can be obtained', () => {
+    const ffmpeg = LICENSES.find((entry) => entry.name.startsWith('FFmpeg'))
+    expect(ffmpeg?.note).toMatch(/source/i)
+    expect(ffmpeg?.note).toMatch(/BtbN|configure|configuration/)
+  })
+
   // The version shown has to be the version that ships. Nothing else in the
   // renderer can read the manifest, so this is the only thing keeping the two
   // in step when the tag is bumped.

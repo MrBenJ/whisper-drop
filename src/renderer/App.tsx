@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useReducer, useState } from 'react'
+import { About } from './components/About.js'
 import { Done } from './components/Done.js'
 import { DropZone } from './components/DropZone.js'
 import { ErrorView } from './components/ErrorView.js'
@@ -249,6 +250,7 @@ export function App() {
         onToggleEnglishOnly={(value) => void setEnglishOnly(value)}
         onLanguageChange={(value) => void setLanguage(value)}
         onThemeChange={(value) => void setTheme(value)}
+        onOpenAbout={() => dispatch({ type: 'about-opened' })}
         onOpenLicenses={() => dispatch({ type: 'licenses-opened' })}
       />
 
@@ -337,6 +339,8 @@ export function App() {
       {state.licensesOpen && (
         <Licenses onClose={() => dispatch({ type: 'licenses-closed' })} />
       )}
+
+      {state.aboutOpen && <About onClose={() => dispatch({ type: 'about-closed' })} />}
     </div>
   )
 }

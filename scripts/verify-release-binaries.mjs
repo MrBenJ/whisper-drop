@@ -1,24 +1,30 @@
 #!/usr/bin/env node
-// Guards the release workflow against packaging a binary built for the wrong
-// architecture. Two binaries are checked:
+// Guards the release workflow against packaging a wrong or non-redistributable
+// media binary. Three binaries, all in resources/<platform>-<arch>/, are checked:
 //
-//   - whisper-cli, which `npm run setup` cross-compiles into
-//     resources/<platform>-<arch>/ for the arch the release job asks for.
-//   - the ffmpeg-static binary, which is downloaded (not compiled) by
-//     ffmpeg-static's own install script, picking exactly one arch based on
-//     npm_config_arch/npm_config_platform at install time. A bare `npm ci` on
-//     an arm64 GitHub runner fetches an arm64 ffmpeg even for the "macOS x64"
-//     matrix leg — the app installs and launches fine, and every transcode
-//     fails silently (`spawn … EBADARCH`). See the "Install the ${arch}
-//     ffmpeg-static binary" step in release.yml for the fix; this step is
-//     what proves that fix actually worked, instead of trusting it.
+//   - whisper-cli, which `npm run setup` cross-compiles for the arch the
+//     release job asks for (existence only).
+//   - ffmpeg and ffprobe, provisioned by `scripts/build-ffmpeg.mjs` (compiled
+//     from source on macOS, downloaded from BtbN on Windows/Linux). Two failure
+//     modes are gated here:
+//       * wrong architecture — a macOS x64 leg cross-built on an arm64 runner
+//         installs and launches fine, then fails every transcode silently
+//         (`spawn … EBADARCH`). The arch is read from the binary's own header.
+//       * non-redistributable build — an ffmpeg built --enable-gpl/--enable-nonfree
+//         must never be packaged or published. The binary's embedded configuration
+//         is byte-scanned (never executed, so this works cross-arch too).
 //
-// Existence alone isn't enough for either binary — both must match
-// TARGET_ARCH specifically, or this fails loudly in CI instead of quietly in
-// a client's hands.
+// Existence alone isn't enough for any binary — all three must match
+// TARGET_ARCH, and the media ones must be LGPL-clean, or this fails loudly in
+// CI instead of quietly in a client's hands.
 import { existsSync, readFileSync } from 'node:fs'
+import { assertRedistributableFfmpeg } from './lib/ffmpeg-license.mjs'
 
-const platform = process.platform
+const platform = process.env.TARGET_PLATFORM ?? process.platform
+if (platform !== 'darwin' && platform !== 'win32' && platform !== 'linux') {
+  console.error(`TARGET_PLATFORM must be darwin, win32 or linux, received ${platform}`)
+  process.exit(1)
+}
 const arch = process.env.TARGET_ARCH
 if (arch !== 'x64' && arch !== 'arm64') {
   console.error(`TARGET_ARCH must be x64 or arm64, received ${arch}`)
@@ -42,29 +48,45 @@ if (!existsSync(cliPath)) {
   console.log(`found ${cliPath}`)
 }
 
-// --- ffmpeg-static: same "missing file" failure mode, plus the silent
-// wrong-arch failure mode described above. ---
+// --- Provisioned media binaries: same "missing file" failure mode, plus the
+// silent wrong-arch failure mode and the non-redistributable-build failure
+// mode described above. ---
 const ffmpegExe = platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
-const ffmpegPath = `node_modules/ffmpeg-static/${ffmpegExe}`
-if (!existsSync(ffmpegPath)) {
-  fail(`missing ${ffmpegPath} — ffmpeg-static did not install a binary`)
-} else {
-  try {
-    const detected = detectArch(platform, readFileSync(ffmpegPath))
-    if (detected !== arch) {
-      fail(
-        `${ffmpegPath} is built for ${detected}, expected ${arch} — the wrong ` +
-          `ffmpeg-static binary was installed and every transcode in this build would fail`,
-      )
-    } else {
-      console.log(`confirmed ${ffmpegPath} is ${detected}`)
-    }
-  } catch (err) {
-    fail(`could not determine ${ffmpegPath}'s architecture: ${err.message}`)
-  }
-}
+const ffprobeExe = platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+
+verifyMediaBinary(`resources/${platform}-${arch}/${ffmpegExe}`, 'transcode')
+verifyMediaBinary(`resources/${platform}-${arch}/${ffprobeExe}`, 'media probe')
 
 if (failed) process.exit(1)
+
+function verifyMediaBinary(path, operation) {
+  if (!existsSync(path)) {
+    fail(`missing ${path} — ffmpeg/ffprobe were not provisioned; run scripts/build-ffmpeg.mjs`)
+    return
+  }
+
+  const buf = readFileSync(path)
+  try {
+    const detected = detectArch(platform, buf)
+    if (detected !== arch) {
+      fail(
+        `${path} is built for ${detected}, expected ${arch} — every ${operation} in this build would fail`,
+      )
+      return
+    }
+    console.log(`confirmed ${path} is ${detected}`)
+  } catch (err) {
+    fail(`could not determine ${path}'s architecture: ${err.message}`)
+    return
+  }
+
+  try {
+    assertRedistributableFfmpeg(buf, path)
+    console.log(`confirmed ${path} is a redistributable LGPL build`)
+  } catch (err) {
+    fail(err.message)
+  }
+}
 
 // Reads the executable header directly rather than shelling out to `file`/
 // `lipo`, so this works identically on macOS, Windows and Linux runners

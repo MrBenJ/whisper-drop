@@ -330,6 +330,18 @@ describe('ModelPicker', () => {
     expect(h.onClose).toHaveBeenCalledOnce()
   })
 
+  it('keeps the close control outside the scrollable model content', () => {
+    const h = handlers()
+    renderPicker(rowsFor(), h, { firstRun: false })
+
+    const dialog = screen.getByRole('dialog')
+    const close = screen.getByRole('button', { name: 'Close' })
+    const scrollRegion = dialog.querySelector('.model-picker-body')
+
+    expect(scrollRegion).toBeTruthy()
+    expect(scrollRegion?.contains(close)).toBe(false)
+  })
+
   // M8 regression test removed here (was: 'still shows the partial-swap note
   // even if the resolved id does not equal the base id'). It constructed
   // `resolved.id: 'large-v3'` equal to `base: 'large-v3'` despite an inline

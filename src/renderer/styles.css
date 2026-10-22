@@ -283,7 +283,7 @@ select {
   transform: translateX(14px);
 }
 
-.licenses-button {
+.header-link-button {
   padding: var(--space-1) var(--space-2);
   background: transparent;
   border: 1px solid var(--hairline);
@@ -293,9 +293,31 @@ select {
   color: var(--ink-muted);
 }
 
-.licenses-button:hover {
+.header-link-button:hover {
   border-color: var(--accent);
   color: var(--accent-text);
+}
+
+@media (max-width: 760px) {
+  .app-header {
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+  }
+
+  .model-button {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+
+  .header-controls {
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: var(--space-2) var(--space-3);
+  }
 }
 
 /* ---------- Main / shared ---------- */
@@ -535,6 +557,7 @@ select {
 
 .model-picker-overlay .model-picker {
   max-height: min(640px, 88vh);
+  overflow: hidden;
 }
 
 .model-picker {
@@ -559,6 +582,17 @@ select {
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+}
+
+.model-picker-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.model-picker-overlay .model-picker-body {
+  overflow-y: auto;
 }
 
 .model-picker-title {
@@ -728,8 +762,9 @@ select {
   color: var(--accent-text);
 }
 
-/* ---------- Licenses ---------- */
+/* ---------- About / Licenses ---------- */
 
+.about-overlay,
 .licenses-overlay {
   position: fixed;
   inset: 0;
@@ -741,6 +776,7 @@ select {
   z-index: 10;
 }
 
+.about,
 .licenses {
   display: flex;
   flex-direction: column;
@@ -755,10 +791,12 @@ select {
   overflow-y: auto;
 }
 
+.about:focus,
 .licenses:focus {
   outline: none;
 }
 
+.about-header,
 .licenses-header {
   display: flex;
   align-items: flex-start;
@@ -766,6 +804,7 @@ select {
   gap: var(--space-3);
 }
 
+.about-title,
 .licenses-title {
   margin: 0;
   font-family: var(--font-display);
@@ -773,6 +812,7 @@ select {
   font-weight: 600;
 }
 
+.about-close,
 .licenses-close {
   flex: 0 0 auto;
   width: 28px;
@@ -786,9 +826,41 @@ select {
   color: var(--ink-muted);
 }
 
+.about-close:hover,
 .licenses-close:hover {
   border-color: var(--accent);
   color: var(--accent-text);
+}
+
+.about-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.about-content section {
+  padding: var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper);
+}
+
+.about-content h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.about-content p {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-muted);
+}
+
+.about-url {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  user-select: text;
 }
 
 .licenses-list {

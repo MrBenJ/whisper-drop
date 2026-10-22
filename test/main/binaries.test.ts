@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -8,7 +8,6 @@ import {
   isPackaged,
   resolveResourcesDir,
   resolveWhisperCliPath,
-  unpackedPath,
   whisperCliPath,
 } from '../../src/main/binaries.js'
 
@@ -127,35 +126,6 @@ describe('resolveWhisperCliPath', () => {
   })
 })
 
-describe('unpackedPath', () => {
-  it('rewrites a posix path inside the asar', () => {
-    expect(unpackedPath('/App/Contents/Resources/app.asar/node_modules/ffmpeg-static/ffmpeg')).toBe(
-      '/App/Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg',
-    )
-  })
-
-  it('rewrites a Windows path inside the asar', () => {
-    expect(unpackedPath('C:\\Program Files\\whisper-drop\\resources\\app.asar\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe')).toBe(
-      'C:\\Program Files\\whisper-drop\\resources\\app.asar.unpacked\\node_modules\\ffprobe-static\\bin\\win32\\x64\\ffprobe.exe',
-    )
-  })
-
-  it('leaves a development path alone', () => {
-    expect(unpackedPath('/repo/node_modules/ffmpeg-static/ffmpeg')).toBe(
-      '/repo/node_modules/ffmpeg-static/ffmpeg',
-    )
-  })
-
-  it('does not rewrite an already unpacked path twice', () => {
-    const unpacked = '/App/Contents/Resources/app.asar.unpacked/node_modules/ffmpeg-static/ffmpeg'
-    expect(unpackedPath(unpacked)).toBe(unpacked)
-  })
-
-  it('does not rewrite a directory that merely ends in app.asar', () => {
-    expect(unpackedPath('/repo/my-app.asar/bin/ffmpeg')).toBe('/repo/my-app.asar/bin/ffmpeg')
-  })
-})
-
 describe('whisperCliPath', () => {
   it('honours the WHISPER_DROP_WHISPER_BIN override', () => {
     process.env.WHISPER_DROP_WHISPER_BIN = '/custom/whisper-cli'
@@ -178,12 +148,47 @@ describe('whisperCliPath', () => {
   })
 })
 
+const ffmpegBuilt = existsSync(ffmpegPath())
+
 describe('media binaries', () => {
-  it('resolves ffmpeg to a file that exists', () => {
-    expect(existsSync(ffmpegPath())).toBe(true)
+  it('resolves ffmpeg and ffprobe under resources/<platform>-<arch>', () => {
+    const dir = join('resources', `${process.platform}-${process.arch}`)
+    expect(ffmpegPath()).toContain(dir)
+    expect(ffprobePath()).toContain(dir)
   })
 
-  it('resolves ffprobe to a file that exists', () => {
-    expect(existsSync(ffprobePath())).toBe(true)
-  })
+  it.skipIf(!ffmpegBuilt)(
+    ffmpegBuilt
+      ? 'resolves ffmpeg/ffprobe to files that exist once npm run setup has run'
+      : 'resolves ffmpeg/ffprobe to files that exist once npm run setup has run (skipped: run `npm run setup`)',
+    () => {
+      expect(existsSync(ffmpegPath())).toBe(true)
+      expect(existsSync(ffprobePath())).toBe(true)
+    },
+  )
+
+  it.skipIf(!ffmpegBuilt || (process.arch !== 'arm64' && process.arch !== 'x64'))(
+    'resolves ffprobe to a binary built for the current process architecture',
+    () => {
+      const binary = readFileSync(ffprobePath())
+      let detected: 'arm64' | 'x64' | undefined
+
+      if (process.platform === 'darwin') {
+        const cpuType = binary.readUInt32LE(4)
+        if (cpuType === 0x0100000c) detected = 'arm64'
+        if (cpuType === 0x01000007) detected = 'x64'
+      } else if (process.platform === 'win32') {
+        const peOffset = binary.readUInt32LE(0x3c)
+        const machine = binary.readUInt16LE(peOffset + 4)
+        if (machine === 0xaa64) detected = 'arm64'
+        if (machine === 0x8664) detected = 'x64'
+      } else if (process.platform === 'linux') {
+        const machine = binary.readUInt16LE(18)
+        if (machine === 0xb7) detected = 'arm64'
+        if (machine === 0x3e) detected = 'x64'
+      }
+
+      expect(detected).toBe(process.arch)
+    },
+  )
 })

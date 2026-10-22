@@ -83,3 +83,19 @@ describe('theme tokens', () => {
     }
   })
 })
+
+describe('minimum-width header', () => {
+  it('allows the controls to shrink and wrap at the supported 640px window width', async () => {
+    const css = await readCss()
+    const mediaAt = css.indexOf('@media (max-width: 760px)')
+
+    expect(mediaAt).toBeGreaterThan(-1)
+    const mediaBody = blockBody(css, mediaAt)
+    const controlsAt = mediaBody.indexOf('.header-controls')
+    expect(controlsAt).toBeGreaterThan(-1)
+
+    const controlsBody = blockBody(mediaBody, controlsAt)
+    expect(controlsBody).toMatch(/min-width\s*:\s*0\s*;/)
+    expect(controlsBody).toMatch(/flex-wrap\s*:\s*wrap\s*;/)
+  })
+})

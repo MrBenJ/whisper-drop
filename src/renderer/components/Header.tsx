@@ -25,6 +25,7 @@ type HeaderProps = {
   onToggleEnglishOnly: (englishOnly: boolean) => void
   onLanguageChange: (language: string) => void
   onThemeChange: (theme: Theme) => void
+  onOpenAbout: () => void
   onOpenLicenses: () => void
 }
 
@@ -35,6 +36,7 @@ export function Header({
   onToggleEnglishOnly,
   onLanguageChange,
   onThemeChange,
+  onOpenAbout,
   onOpenLicenses,
 }: HeaderProps) {
   const modelLabel = activeRow?.resolved.label ?? 'Choose a model'
@@ -94,7 +96,11 @@ export function Header({
           </select>
         </label>
 
-        <button type="button" className="licenses-button" onClick={onOpenLicenses}>
+        <button type="button" className="header-link-button" onClick={onOpenAbout}>
+          About
+        </button>
+
+        <button type="button" className="header-link-button" onClick={onOpenLicenses}>
           Licenses
         </button>
       </div>

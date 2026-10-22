@@ -13,12 +13,13 @@ type LicensesProps = {
 export function Licenses({ onClose }: LicensesProps) {
   const headingId = useId()
   const containerRef = useRef<HTMLDivElement>(null)
-  const previouslyFocused = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    previouslyFocused.current = document.activeElement as HTMLElement | null
+    const previouslyFocused = document.activeElement as HTMLElement | null
     containerRef.current?.focus()
-    return () => previouslyFocused.current?.focus()
+    return () => {
+      if (previouslyFocused?.isConnected) previouslyFocused.focus()
+    }
   }, [])
 
   useEffect(() => {

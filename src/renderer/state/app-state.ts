@@ -17,6 +17,8 @@ export type AppState = {
   pickerOpen: boolean
   /** Same idea as the picker: reachable from the header at any time, over any view. */
   licensesOpen: boolean
+  /** App purpose and authorship, presented as a header-triggered overlay. */
+  aboutOpen: boolean
   /** True between dropping a file and the first JobState arriving. */
   starting: boolean
 }
@@ -35,6 +37,8 @@ export type AppEvent =
   | { type: 'picker-closed' }
   | { type: 'licenses-opened' }
   | { type: 'licenses-closed' }
+  | { type: 'about-opened' }
+  | { type: 'about-closed' }
   | { type: 'reset' }
 
 export const INITIAL_STATE: AppState = {
@@ -46,6 +50,7 @@ export const INITIAL_STATE: AppState = {
   savedPath: null,
   pickerOpen: false,
   licensesOpen: false,
+  aboutOpen: false,
   starting: false,
 }
 
@@ -140,10 +145,16 @@ export function reduce(state: AppState, event: AppEvent): AppState {
       return { ...state, pickerOpen: false }
 
     case 'licenses-opened':
-      return { ...state, licensesOpen: true }
+      return { ...state, licensesOpen: true, aboutOpen: false }
 
     case 'licenses-closed':
       return { ...state, licensesOpen: false }
+
+    case 'about-opened':
+      return { ...state, aboutOpen: true, licensesOpen: false }
+
+    case 'about-closed':
+      return { ...state, aboutOpen: false }
 
     case 'reset':
       return { ...state, job: null, error: null, frozen: false, savedPath: null, starting: false }

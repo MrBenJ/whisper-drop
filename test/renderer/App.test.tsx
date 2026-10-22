@@ -234,4 +234,34 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
   })
+
+  it('places About immediately before Licenses and opens the About dialog', async () => {
+    installFakeApi({ models: { list: vi.fn(async () => readyModels()) } as never })
+
+    render(<App />)
+    await waitForReady()
+
+    const headerButtons = [...document.querySelectorAll<HTMLButtonElement>('.header-controls > button')]
+    expect(headerButtons.map((button) => button.textContent?.trim())).toEqual(['About', 'Licenses'])
+    expect(headerButtons.every((button) => button.classList.contains('header-link-button'))).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: 'About' }))
+    expect(screen.getByRole('dialog', { name: 'About whisper-drop' })).toBeTruthy()
+  })
+
+  it('the About dialog explains the app, suggested uses, and its creator', async () => {
+    installFakeApi({ models: { list: vi.fn(async () => readyModels()) } as never })
+
+    render(<App />)
+    await waitForReady()
+    fireEvent.click(screen.getByRole('button', { name: 'About' }))
+
+    expect(screen.getByText(/entirely on your computer/i)).toBeTruthy()
+    expect(screen.getByText(/voice memos, meetings, interviews, client calls, and courses/i)).toBeTruthy()
+    expect(screen.getByText(/Ben Junya/)).toBeTruthy()
+    expect(screen.getByText(/Human Balance AI/)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
 })
